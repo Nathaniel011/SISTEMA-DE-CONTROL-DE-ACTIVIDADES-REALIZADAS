@@ -9,11 +9,8 @@ import java.util.UUID;
 
 public interface UserRepository extends JpaRepository<User, UUID> {
 
-    @Query("SELECT u FROM User u JOIN FETCH u.roles WHERE u.organization.id = :orgId AND u.username = :username")
-    Optional<User> findByOrganizationIdAndUsername(UUID orgId, String username);
-
     @Query("SELECT u FROM User u JOIN FETCH u.roles WHERE u.username = :username")
-    Optional<User> findByUsernameWithRoles(String username);
+    Optional<User> findByUsername(String username);
 
-    List<User> findByOrganizationIdAndActiveTrue(UUID orgId);
+    List<User> findByActiveTrue();
 }

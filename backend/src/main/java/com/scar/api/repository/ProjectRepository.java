@@ -8,6 +8,6 @@ import java.util.UUID;
 
 public interface ProjectRepository extends JpaRepository<Project, UUID> {
 
-    @Query("SELECT DISTINCT p FROM Project p LEFT JOIN FETCH p.members WHERE p.organization.id = :orgId ORDER BY p.createdAt")
-    List<Project> findByOrganizationIdWithMembers(UUID orgId);
+    @Query("SELECT DISTINCT p FROM Project p LEFT JOIN FETCH p.members ORDER BY p.createdAt")
+    List<Project> findAllWithMembers();
 }

@@ -35,7 +35,6 @@ public class JwtService {
         return Jwts.builder()
             .subject(user.getId().toString())
             .claim("username", user.getUsername())
-            .claim("orgId", user.getOrganization().getId().toString())
             .claim("roles", roles)
             .issuedAt(Date.from(now))
             .expiration(Date.from(expiry))
@@ -58,7 +57,6 @@ public class JwtService {
 
         return new ScarPrincipal(
             UUID.fromString(claims.getSubject()),
-            UUID.fromString(claims.get("orgId", String.class)),
             claims.get("username", String.class),
             roles
         );

@@ -10,8 +10,8 @@ import java.util.UUID;
 
 public interface IssueRepository extends JpaRepository<Issue, UUID> {
 
-    @Query("SELECT i FROM Issue i LEFT JOIN FETCH i.labels LEFT JOIN FETCH i.assignee WHERE i.project.organization.id = :orgId")
-    List<Issue> findByOrganizationId(UUID orgId);
+    @Query("SELECT i FROM Issue i LEFT JOIN FETCH i.labels LEFT JOIN FETCH i.assignee")
+    List<Issue> findAll();
 
     @Query("SELECT i FROM Issue i LEFT JOIN FETCH i.labels LEFT JOIN FETCH i.assignee WHERE i.project.id = :projectId")
     List<Issue> findByProjectId(UUID projectId);
@@ -19,4 +19,6 @@ public interface IssueRepository extends JpaRepository<Issue, UUID> {
     Optional<Issue> findTopByProjectIdOrderByIssueNumberDesc(UUID projectId);
 
     List<Issue> findByProjectIdAndColumnIdOrderBySortOrder(UUID projectId, IssueColumn columnId);
+
+    Optional<Issue> findByPublicToken(UUID publicToken);
 }

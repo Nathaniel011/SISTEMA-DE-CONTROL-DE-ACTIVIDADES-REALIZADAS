@@ -94,6 +94,15 @@ public class WorkController {
         return workService.gantt(principal, projectId);
     }
 
+    @PatchMapping("/gantt/tasks/{id}")
+    public GanttDto.GanttTaskDto updateGanttTaskDates(
+        @AuthenticationPrincipal ScarPrincipal principal,
+        @PathVariable UUID id,
+        @Valid @RequestBody GanttTaskUpdateRequest request
+    ) {
+        return workService.updateGanttTaskDates(principal, id, request);
+    }
+
     @PostMapping("/issues/{id}/dependencies")
     public GanttDto.GanttLinkDto addDependency(
         @AuthenticationPrincipal ScarPrincipal principal,
@@ -109,5 +118,20 @@ public class WorkController {
         @PathVariable UUID id
     ) {
         workService.removeDependency(principal, id);
+    }
+
+    @GetMapping("/reports")
+    public ReportsDto reports(
+        @AuthenticationPrincipal ScarPrincipal principal,
+        @RequestParam(required = false) UUID projectId,
+        @RequestParam(required = false) String startDate,
+        @RequestParam(required = false) String endDate
+    ) {
+        return workService.getReports(principal, projectId, startDate, endDate);
+    }
+
+    @GetMapping("/public/tracking/{token}")
+    public WorkBootstrapDto.CardDto getPublicTracking(@PathVariable String token) {
+        return workService.getPublicTracking(token);
     }
 }

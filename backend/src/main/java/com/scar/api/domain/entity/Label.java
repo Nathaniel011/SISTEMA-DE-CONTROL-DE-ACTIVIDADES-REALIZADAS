@@ -11,10 +11,6 @@ public class Label {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "organization_id", nullable = false)
-    private Organization organization;
-
     @Column(nullable = false)
     private String name;
 
@@ -22,8 +18,6 @@ public class Label {
     private String color;
 
     public UUID getId() { return id; }
-    public Organization getOrganization() { return organization; }
-    public void setOrganization(Organization organization) { this.organization = organization; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
     public String getColor() { return color; }

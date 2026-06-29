@@ -1,5 +1,5 @@
 export type WorkPriority = 'low' | 'medium' | 'high' | 'critical';
-export type WorkColumnId = 'backlog' | 'todo' | 'in_progress' | 'review' | 'done';
+export type WorkColumnId = 'registered' | 'in_assignment' | 'backlog' | 'todo' | 'in_progress' | 'review' | 'done' | 'closed';
 export type WorkIssueType = 'task' | 'bug' | 'feature' | 'chore';
 
 export const WORK_ISSUE_TYPES: {
@@ -15,11 +15,14 @@ export const WORK_ISSUE_TYPES: {
 ];
 
 export const WORK_STATUS_LABELS: Record<WorkColumnId, string> = {
-  backlog: 'Pendiente',
-  todo: 'Pendiente',
+  registered: '📥 Registrada',
+  in_assignment: '🔄 En Asignación',
+  backlog: 'Backlog',
+  todo: 'Por hacer',
   in_progress: 'En curso',
-  review: 'En curso',
+  review: 'En revisión',
   done: 'Hecho',
+  closed: 'Cerrada',
 };
 
 export interface WorkLabel {
@@ -69,6 +72,13 @@ export interface WorkCard {
   order: number;
   createdAt: string;
   updatedAt: string;
+  requesterName?: string;
+  requesterPhone?: string;
+  requesterEmail?: string;
+  receptionChannel?: string;
+  publicToken?: string;
+  startDate?: string;
+  endDate?: string;
 }
 
 export interface WorkBoard {
@@ -96,11 +106,14 @@ export interface WorkActiveTimer {
 }
 
 export const WORK_COLUMNS: { id: WorkColumnId; title: string; icon: string }[] = [
+  { id: 'registered', title: '📥 Registrada', icon: 'pi pi-inbox' },
+  { id: 'in_assignment', title: '🔄 En Asignación', icon: 'pi pi-arrows-alt' },
   { id: 'backlog', title: 'Backlog', icon: 'pi pi-inbox' },
   { id: 'todo', title: 'Por hacer', icon: 'pi pi-list' },
   { id: 'in_progress', title: 'En progreso', icon: 'pi pi-spinner' },
   { id: 'review', title: 'En revisión', icon: 'pi pi-eye' },
   { id: 'done', title: 'Hecho', icon: 'pi pi-check-circle' },
+  { id: 'closed', title: 'Cerrada', icon: 'pi pi-lock' },
 ];
 
 export const WORK_PRIORITIES: { value: WorkPriority; label: string; icon: string; tone: string }[] = [

@@ -4,10 +4,8 @@ import java.util.List;
 
 public record LoginResponse(
     String token,
-    UserDto user,
-    OrganizationDto organization
+    UserDto user
 ) {
-    public record OrganizationDto(String id, String name, String slug) {}
     public record UserDto(
         String id,
         String fullName,

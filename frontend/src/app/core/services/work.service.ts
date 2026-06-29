@@ -272,9 +272,14 @@ export class WorkService {
     return board;
   }
 
-  createIssue(boardId: string, title: string, type: WorkIssueType = 'task'): WorkCard {
+  createIssue(
+    boardId: string,
+    title: string,
+    type: WorkIssueType = 'task',
+    columnId: WorkColumnId = 'todo'
+  ): WorkCard {
     if (environment.useApi) {
-      void firstValueFrom(this.workApi.createIssue({ boardId, title, type, columnId: 'todo' })).then(card => {
+      void firstValueFrom(this.workApi.createIssue({ boardId, title, type, columnId })).then(card => {
         this.patch({ cards: [...this.cards(), card] });
       });
       return {
@@ -282,7 +287,7 @@ export class WorkService {
         boardId,
         issueNumber: 0,
         type,
-        columnId: 'todo',
+        columnId,
         title,
         description: '',
         priority: 'medium',
@@ -308,7 +313,7 @@ export class WorkService {
       boardId,
       issueNumber,
       type,
-      columnId: 'todo',
+      columnId,
       title: title.trim(),
       description: '',
       priority: 'medium',
@@ -319,7 +324,7 @@ export class WorkService {
       trackedMinutes: 0,
       comments: [],
       timeEntries: [],
-      order: this.nextOrder(boardId, 'todo'),
+      order: this.nextOrder(boardId, columnId),
       createdAt: now,
       updatedAt: now,
     };
@@ -328,10 +333,7 @@ export class WorkService {
   }
 
   createCard(boardId: string, columnId: WorkColumnId, title: string): WorkCard {
-    const card = this.createIssue(boardId, title);
-    if (columnId !== 'todo') {
-      this.moveCard(card.id, columnId);
-    }
+    const card = this.createIssue(boardId, title, 'task', columnId);
     return this.getCard(card.id) ?? card;
   }
 
@@ -350,6 +352,12 @@ export class WorkService {
         dueDate: merged.dueDate,
         estimateMinutes: merged.estimateMinutes,
         labelIds: merged.labelIds,
+        requesterName: merged.requesterName,
+        requesterPhone: merged.requesterPhone,
+        requesterEmail: merged.requesterEmail,
+        receptionChannel: merged.receptionChannel,
+        startDate: merged.startDate,
+        endDate: merged.endDate,
       };
       void firstValueFrom(this.workApi.updateIssue(cardId, payload)).then(updated => {
         this.replaceCard(updated);

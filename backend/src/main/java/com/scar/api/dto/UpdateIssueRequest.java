@@ -9,5 +9,11 @@ public record UpdateIssueRequest(
     String assigneeId,
     String dueDate,
     Integer estimateMinutes,
-    java.util.List<String> labelIds
+    java.util.List<String> labelIds,
+    String requesterName,
+    String requesterPhone,
+    String requesterEmail,
+    String receptionChannel,
+    String startDate,
+    String endDate
 ) {}

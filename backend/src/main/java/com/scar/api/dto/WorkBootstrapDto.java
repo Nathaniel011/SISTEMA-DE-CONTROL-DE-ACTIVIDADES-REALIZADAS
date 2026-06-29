@@ -32,7 +32,14 @@ public record WorkBootstrapDto(
         List<TimeEntryDto> timeEntries,
         int order,
         String createdAt,
-        String updatedAt
+        String updatedAt,
+        String requesterName,
+        String requesterPhone,
+        String requesterEmail,
+        String receptionChannel,
+        String publicToken,
+        String startDate,
+        String endDate
     ) {}
     public record ActiveTimerDto(String cardId, String startedAt, String note) {}
 }

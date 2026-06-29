@@ -25,8 +25,10 @@ import {WorkBoard} from './features/work/work-board/work-board';
 import {WorkTimesheets} from './features/work/work-timesheets/work-timesheets';
 import {WorkDashboards} from './features/work/work-dashboards/work-dashboards';
 import {WorkReports} from './features/work/work-reports/work-reports';
-import {WorkPlaceholder} from './features/work/work-placeholder/work-placeholder';
 import {WorkGantt} from './features/work/work-gantt/work-gantt';
+import {WorkInbox} from './features/work/work-inbox/work-inbox';
+import {WorkKnowledge} from './features/work/work-knowledge/work-knowledge';
+import {WorkWhiteboards} from './features/work/work-whiteboards/work-whiteboards';
 
 export const routes: Routes = [
   {
@@ -48,6 +50,7 @@ export const routes: Routes = [
           },
           { path: 'agile', component: WorkAgile, data: { breadcrumb: 'Paneles de Agile' } },
           { path: 'agile/:boardId', component: WorkBoard, data: { breadcrumb: 'Tablero' } },
+          { path: 'inbox', component: WorkInbox, data: { breadcrumb: 'Bandeja de Entrada' } },
           {
             path: 'reports',
             component: WorkReports,
@@ -56,13 +59,8 @@ export const routes: Routes = [
           { path: 'projects', component: WorkProjects, data: { breadcrumb: 'Proyectos' } },
           {
             path: 'knowledge',
-            component: WorkPlaceholder,
-            data: {
-              breadcrumb: 'Base de conocimiento',
-              title: 'Base de conocimiento',
-              description: 'Artículos y documentación del equipo.',
-              icon: 'pi pi-book',
-            },
+            component: WorkKnowledge,
+            data: { breadcrumb: 'Base de conocimiento' },
           },
           { path: 'timesheets', component: WorkTimesheets, data: { breadcrumb: 'Partes de horas' } },
           {
@@ -72,13 +70,8 @@ export const routes: Routes = [
           },
           {
             path: 'whiteboards',
-            component: WorkPlaceholder,
-            data: {
-              breadcrumb: 'Pizarras',
-              title: 'Pizarras',
-              description: 'Espacios colaborativos visuales.',
-              icon: 'pi pi-palette',
-            },
+            component: WorkWhiteboards,
+            data: { breadcrumb: 'Pizarras' },
           },
         ],
       },

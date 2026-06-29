@@ -46,6 +46,48 @@ export interface GanttResponse {
   links: GanttLink[];
 }
 
+export interface KnowledgeArticle {
+  id: string;
+  projectId: string | null;
+  projectName: string | null;
+  title: string;
+  slug: string;
+  content: string;
+  tags: string[];
+  status: 'draft' | 'published' | 'archived';
+  authorName: string | null;
+  updatedByName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface KnowledgeArticlePayload {
+  projectId?: string | null;
+  title?: string;
+  content?: string;
+  tags?: string[];
+  status?: 'draft' | 'published' | 'archived';
+}
+
+export interface WhiteboardDto {
+  id: string;
+  projectId: string | null;
+  projectName: string | null;
+  name: string;
+  description: string;
+  contentJson: string;
+  updatedByName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WhiteboardPayload {
+  projectId?: string | null;
+  name?: string;
+  description?: string;
+  contentJson?: string;
+}
+
 export interface UpdateIssuePayload {
   title?: string;
   description?: string;
@@ -56,6 +98,12 @@ export interface UpdateIssuePayload {
   dueDate?: string | null;
   estimateMinutes?: number | null;
   labelIds?: string[];
+  requesterName?: string;
+  requesterPhone?: string;
+  requesterEmail?: string;
+  receptionChannel?: string;
+  startDate?: string;
+  endDate?: string;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -108,7 +156,11 @@ export class WorkApiService {
     return this.http.get<GanttResponse>(`${this.base}/api/gantt`, { params: { projectId } });
   }
 
-  addDependency(issueId: string, dependsOnIssueId: string, dependencyType = 'finish_to_start'): Observable<GanttLink> {
+  updateGanttTaskDates(issueId: string, start: string, end: string): Observable<GanttTask> {
+    return this.http.patch<GanttTask>(`${this.base}/api/gantt/tasks/${issueId}`, { start, end });
+  }
+
+  addDependency(issueId: string, dependsOnIssueId: string, dependencyType = 'FINISH_TO_START'): Observable<GanttLink> {
     return this.http.post<GanttLink>(`${this.base}/api/issues/${issueId}/dependencies`, {
       dependsOnIssueId,
       dependencyType,
@@ -117,5 +169,54 @@ export class WorkApiService {
 
   removeDependency(id: string): Observable<void> {
     return this.http.delete<void>(`${this.base}/api/dependencies/${id}`);
+  }
+
+  getReports(projectId?: string, startDate?: string, endDate?: string): Observable<any> {
+    const params: any = {};
+    if (projectId) params.projectId = projectId;
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
+    return this.http.get<any>(`${this.base}/api/reports`, { params });
+  }
+
+  listKnowledgeArticles(projectId?: string | null, q?: string): Observable<KnowledgeArticle[]> {
+    const params: Record<string, string> = {};
+    if (projectId) params['projectId'] = projectId;
+    if (q?.trim()) params['q'] = q.trim();
+    return this.http.get<KnowledgeArticle[]>(`${this.base}/api/knowledge/articles`, { params });
+  }
+
+  createKnowledgeArticle(payload: KnowledgeArticlePayload): Observable<KnowledgeArticle> {
+    return this.http.post<KnowledgeArticle>(`${this.base}/api/knowledge/articles`, payload);
+  }
+
+  updateKnowledgeArticle(id: string, payload: KnowledgeArticlePayload): Observable<KnowledgeArticle> {
+    return this.http.put<KnowledgeArticle>(`${this.base}/api/knowledge/articles/${id}`, payload);
+  }
+
+  deleteKnowledgeArticle(id: string): Observable<void> {
+    return this.http.delete<void>(`${this.base}/api/knowledge/articles/${id}`);
+  }
+
+  listWhiteboards(projectId?: string | null): Observable<WhiteboardDto[]> {
+    const params: Record<string, string> = {};
+    if (projectId) params['projectId'] = projectId;
+    return this.http.get<WhiteboardDto[]>(`${this.base}/api/whiteboards`, { params });
+  }
+
+  createWhiteboard(payload: WhiteboardPayload): Observable<WhiteboardDto> {
+    return this.http.post<WhiteboardDto>(`${this.base}/api/whiteboards`, payload);
+  }
+
+  updateWhiteboard(id: string, payload: WhiteboardPayload): Observable<WhiteboardDto> {
+    return this.http.put<WhiteboardDto>(`${this.base}/api/whiteboards/${id}`, payload);
+  }
+
+  deleteWhiteboard(id: string): Observable<void> {
+    return this.http.delete<void>(`${this.base}/api/whiteboards/${id}`);
+  }
+
+  whiteboardEventsUrl(id: string, token: string): string {
+    return `${this.base}/api/whiteboards/${id}/events?access_token=${encodeURIComponent(token)}`;
   }
 }

@@ -16,7 +16,6 @@ public class DataInitializer {
 
     @Bean
     CommandLineRunner seed(
-        OrganizationRepository organizationRepository,
         UserRepository userRepository,
         ProjectRepository projectRepository,
         LabelRepository labelRepository,
@@ -25,27 +24,22 @@ public class DataInitializer {
         PasswordEncoder passwordEncoder
     ) {
         return args -> {
-            if (organizationRepository.count() > 0) return;
+            if (userRepository.count() > 0) return;
 
-            Organization org = new Organization();
-            org.setName("SCAR Operaciones");
-            org.setSlug("scar");
-            org = organizationRepository.save(org);
-
-            User admin = user("Pedro Condori", "pcondori", "pedro.condori@scar.local", "PC", Set.of(UserRole.ADMIN), org, passwordEncoder);
-            User dev = user("Ana Ríos", "arios", "ana.rios@scar.local", "AR", Set.of(UserRole.MEMBER), org, passwordEncoder);
-            User qa = user("Luis Mendoza", "lmendoza", "luis.mendoza@scar.local", "LM", Set.of(UserRole.MEMBER), org, passwordEncoder);
-            User po = user("Sofía Vega", "svega", "sofia.vega@scar.local", "SV", Set.of(UserRole.SUPERVISOR), org, passwordEncoder);
+            User admin = user("Pedro Condori", "pcondori", "pedro.condori@scar.local", "PC", Set.of(UserRole.ADMIN), passwordEncoder);
+            User dev = user("Ana Ríos", "arios", "ana.rios@scar.local", "AR", Set.of(UserRole.MEMBER), passwordEncoder);
+            User qa = user("Luis Mendoza", "lmendoza", "luis.mendoza@scar.local", "LM", Set.of(UserRole.MEMBER), passwordEncoder);
+            User po = user("Sofía Vega", "svega", "sofia.vega@scar.local", "SV", Set.of(UserRole.SUPERVISOR), passwordEncoder);
             userRepository.saveAll(java.util.List.of(admin, dev, qa, po));
 
-            Label l1 = label(org, "Frontend", "#14b8a6");
-            Label l2 = label(org, "Backend", "#0d9488");
-            Label l3 = label(org, "Bug", "#ef4444");
-            Label l4 = label(org, "Mejora", "#8b5cf6");
+            Label l1 = label("Frontend", "#14b8a6");
+            Label l2 = label("Backend", "#0d9488");
+            Label l3 = label("Bug", "#ef4444");
+            Label l4 = label("Mejora", "#8b5cf6");
             labelRepository.saveAll(java.util.List.of(l1, l2, l3, l4));
 
-            Project arg = project(org, "ARG", "Plataforma SCAR", "Evolución del ecosistema operativo.", Set.of(admin, dev, po));
-            Project spr = project(org, "SPR", "Sprint actual", "Entregables de la iteración en curso.", Set.of(admin, dev, qa));
+            Project arg = project("ARG", "Plataforma SCAR", "Evolución del ecosistema operativo.", Set.of(admin, dev, po));
+            Project spr = project("SPR", "Sprint actual", "Entregables de la iteración en curso.", Set.of(admin, dev, qa));
             projectRepository.saveAll(java.util.List.of(arg, spr));
 
             Issue i1 = issue(arg, 1, IssueType.feature, IssueColumn.in_progress, "Diseñar módulo de trabajo Kanban",
@@ -71,9 +65,8 @@ public class DataInitializer {
     }
 
     private User user(String fullName, String username, String email, String initials, Set<UserRole> roles,
-                      Organization org, PasswordEncoder encoder) {
+                      PasswordEncoder encoder) {
         User u = new User();
-        u.setOrganization(org);
         u.setFullName(fullName);
         u.setUsername(username);
         u.setEmail(email);
@@ -83,17 +76,15 @@ public class DataInitializer {
         return u;
     }
 
-    private Label label(Organization org, String name, String color) {
+    private Label label(String name, String color) {
         Label l = new Label();
-        l.setOrganization(org);
         l.setName(name);
         l.setColor(color);
         return l;
     }
 
-    private Project project(Organization org, String key, String name, String desc, Set<User> members) {
+    private Project project(String key, String name, String desc, Set<User> members) {
         Project p = new Project();
-        p.setOrganization(org);
         p.setKeyCode(key);
         p.setName(name);
         p.setDescription(desc);

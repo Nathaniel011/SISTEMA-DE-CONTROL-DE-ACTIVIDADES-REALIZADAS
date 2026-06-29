@@ -58,11 +58,10 @@ public class WorkService {
 
     @Transactional(readOnly = true)
     public WorkBootstrapDto bootstrap(ScarPrincipal principal) {
-        UUID orgId = principal.organizationId();
-        List<User> members = userRepository.findByOrganizationIdAndActiveTrue(orgId);
-        List<Project> projects = projectRepository.findByOrganizationIdWithMembers(orgId);
-        List<Label> labels = labelRepository.findByOrganizationId(orgId);
-        List<Issue> issues = issueRepository.findByOrganizationId(orgId);
+        List<User> members = userRepository.findByActiveTrue();
+        List<Project> projects = projectRepository.findAllWithMembers();
+        List<Label> labels = labelRepository.findAll();
+        List<Issue> issues = issueRepository.findAll();
         Map<UUID, List<IssueComment>> commentsByIssue = loadComments(issues);
         Map<UUID, List<TimeEntry>> timeByIssue = loadTimeEntries(issues);
 
@@ -87,7 +86,6 @@ public class WorkService {
     public WorkBootstrapDto.CardDto createIssue(ScarPrincipal principal, CreateIssueRequest req) {
         Project project = projectRepository.findById(UUID.fromString(req.boardId()))
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Proyecto no encontrado"));
-        assertOrg(project.getOrganization().getId(), principal.organizationId());
 
         int nextNum = issueRepository.findTopByProjectIdOrderByIssueNumberDesc(project.getId())
             .map(i -> i.getIssueNumber() + 1).orElse(1);
@@ -103,15 +101,30 @@ public class WorkService {
         issue.setColumnId(column);
         issue.setTitle(req.title().trim());
         issue.setSortOrder(nextIssueOrder(project.getId(), column));
-        userRepository.findById(principal.userId()).ifPresent(issue::setAssignee);
+        if (principal != null) {
+            userRepository.findById(principal.userId()).ifPresent(issue::setAssignee);
+        }
+        
+        if (req.requesterName() != null) issue.setRequesterName(req.requesterName().trim());
+        if (req.requesterPhone() != null) issue.setRequesterPhone(req.requesterPhone().trim());
+        if (req.requesterEmail() != null) issue.setRequesterEmail(req.requesterEmail().trim());
+        if (req.receptionChannel() != null) issue.setReceptionChannel(req.receptionChannel().trim());
 
         issue = issueRepository.save(issue);
         return toCard(issue, Map.of(), Map.of());
     }
 
     @Transactional
+    public WorkBootstrapDto.CardDto updateWebhookIssueDescription(UUID issueId, String description) {
+        Issue issue = loadIssue(issueId);
+        issue.setDescription(description);
+        issue = issueRepository.save(issue);
+        return toCard(issue, loadComments(List.of(issue)), loadTimeEntries(List.of(issue)));
+    }
+
+    @Transactional
     public WorkBootstrapDto.CardDto updateIssue(ScarPrincipal principal, UUID issueId, UpdateIssueRequest req) {
-        Issue issue = loadIssue(issueId, principal.organizationId());
+        Issue issue = loadIssue(issueId);
         IssueColumn oldColumn = issue.getColumnId();
 
         if (req.title() != null) issue.setTitle(req.title().trim());
@@ -134,6 +147,16 @@ public class WorkService {
             issue.getLabels().clear();
             issue.getLabels().addAll(labels);
         }
+        if (req.requesterName() != null) issue.setRequesterName(req.requesterName().trim());
+        if (req.requesterPhone() != null) issue.setRequesterPhone(req.requesterPhone().trim());
+        if (req.requesterEmail() != null) issue.setRequesterEmail(req.requesterEmail().trim());
+        if (req.receptionChannel() != null) issue.setReceptionChannel(req.receptionChannel().trim());
+        if (req.startDate() != null) {
+            issue.setStartDate(req.startDate().isBlank() ? null : LocalDate.parse(req.startDate()));
+        }
+        if (req.endDate() != null) {
+            issue.setEndDate(req.endDate().isBlank() ? null : LocalDate.parse(req.endDate()));
+        }
 
         issue = issueRepository.save(issue);
 
@@ -149,27 +172,50 @@ public class WorkService {
 
     @Transactional
     public WorkBootstrapDto.CardDto moveIssue(ScarPrincipal principal, UUID issueId, MoveIssueRequest req) {
-        Issue issue = loadIssue(issueId, principal.organizationId());
+        Issue issue = loadIssue(issueId);
         IssueColumn oldColumn = issue.getColumnId();
         IssueColumn newColumn = IssueColumn.valueOf(req.columnId());
+        
+        // Role-based permission checks
+        User user = userRepository.findById(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+        
+        Set<UserRole> roles = user.getRoles();
+        
+        // SECRETARY can only move between REGISTERED and IN_ASSIGNMENT
+        if (roles.contains(UserRole.SECRETARY) && !roles.contains(UserRole.ADMIN)) {
+            if (newColumn != IssueColumn.registered && newColumn != IssueColumn.in_assignment && newColumn != IssueColumn.todo) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "La Secretaría solo puede mover incidencias entre Registrada, En Asignación y Pendiente");
+            }
+        }
+        
+        // MEMBER (TECNICO) cannot move to DONE or CLOSED
+        if (roles.contains(UserRole.MEMBER) && !roles.contains(UserRole.ADMIN) && !roles.contains(UserRole.SUPERVISOR)) {
+            if (newColumn == IssueColumn.done || newColumn == IssueColumn.closed) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Los técnicos no pueden mover incidencias a Hecho o Cerrada. Solo pueden mover a En Revisión o En Curso");
+            }
+        }
+        
         issue.setColumnId(newColumn);
         issue.setSortOrder(req.targetIndex() != null ? req.targetIndex() : nextIssueOrder(issue.getProject().getId(), newColumn));
         issue = issueRepository.save(issue);
+        
         if (!oldColumn.equals(newColumn)) {
             notificationService.notifyStatusChange(issue, principal.userId(), oldColumn.name(), newColumn.name());
         }
+        
         return toCard(issue, loadComments(List.of(issue)), loadTimeEntries(List.of(issue)));
     }
 
     @Transactional
     public void deleteIssue(ScarPrincipal principal, UUID issueId) {
-        Issue issue = loadIssue(issueId, principal.organizationId());
+        Issue issue = loadIssue(issueId);
         issueRepository.delete(issue);
     }
 
     @Transactional
     public WorkBootstrapDto.CommentDto addComment(ScarPrincipal principal, UUID issueId, CommentRequest req) {
-        Issue issue = loadIssue(issueId, principal.organizationId());
+        Issue issue = loadIssue(issueId);
         User author = userRepository.findById(principal.userId()).orElseThrow();
         IssueComment comment = new IssueComment();
         comment.setIssue(issue);
@@ -187,7 +233,7 @@ public class WorkService {
 
     @Transactional
     public WorkBootstrapDto.TimeEntryDto logTime(ScarPrincipal principal, UUID issueId, LogTimeRequest req) {
-        Issue issue = loadIssue(issueId, principal.organizationId());
+        Issue issue = loadIssue(issueId);
         User user = userRepository.findById(principal.userId()).orElseThrow();
         TimeEntry entry = new TimeEntry();
         entry.setIssue(issue);
@@ -209,7 +255,7 @@ public class WorkService {
     @Transactional
     public WorkBootstrapDto.ActiveTimerDto startTimer(ScarPrincipal principal, TimerStartRequest req) {
         activeTimerRepository.findById(principal.userId()).ifPresent(activeTimerRepository::delete);
-        Issue issue = loadIssue(UUID.fromString(req.issueId()), principal.organizationId());
+        Issue issue = loadIssue(UUID.fromString(req.issueId()));
         User user = userRepository.findById(principal.userId()).orElseThrow();
         ActiveTimer timer = new ActiveTimer();
         timer.setUser(user);
@@ -235,26 +281,12 @@ public class WorkService {
     public GanttDto gantt(ScarPrincipal principal, UUID projectId) {
         Project project = projectRepository.findById(projectId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
-        assertOrg(project.getOrganization().getId(), principal.organizationId());
         List<Issue> issues = issueRepository.findByProjectId(projectId);
         List<IssueDependency> deps = dependencyRepository.findByProjectId(projectId);
 
-        List<GanttDto.GanttTaskDto> tasks = issues.stream().map(i -> {
-            LocalDate start = i.getCreatedAt().atZone(java.time.ZoneOffset.UTC).toLocalDate();
-            LocalDate end = i.getDueDate() != null ? i.getDueDate() : start.plusDays(7);
-            int progress = i.getColumnId() == IssueColumn.done ? 100
-                : i.getColumnId() == IssueColumn.in_progress || i.getColumnId() == IssueColumn.review ? 50 : 0;
-            return new GanttDto.GanttTaskDto(
-                i.getId().toString(),
-                project.getKeyCode() + "-" + i.getIssueNumber(),
-                i.getTitle(),
-                start.toString(),
-                end.toString(),
-                i.getColumnId().name(),
-                i.getAssignee() != null ? i.getAssignee().getFullName() : null,
-                progress
-            );
-        }).toList();
+        List<GanttDto.GanttTaskDto> tasks = issues.stream()
+            .map(i -> toGanttTask(i, project))
+            .toList();
 
         List<GanttDto.GanttLinkDto> links = deps.stream()
             .map(d -> new GanttDto.GanttLinkDto(
@@ -269,9 +301,24 @@ public class WorkService {
     }
 
     @Transactional
+    public GanttDto.GanttTaskDto updateGanttTaskDates(ScarPrincipal principal, UUID issueId, GanttTaskUpdateRequest req) {
+        Issue issue = loadIssue(issueId);
+        LocalDate start = LocalDate.parse(req.start());
+        LocalDate end = LocalDate.parse(req.end());
+        if (end.isBefore(start)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La fecha final no puede ser anterior al inicio");
+        }
+        issue.setStartDate(start);
+        issue.setEndDate(end);
+        issue.setDueDate(end);
+        issue = issueRepository.save(issue);
+        return toGanttTask(issue, issue.getProject());
+    }
+
+    @Transactional
     public GanttDto.GanttLinkDto addDependency(ScarPrincipal principal, UUID issueId, DependencyRequest req) {
-        Issue issue = loadIssue(issueId, principal.organizationId());
-        Issue dependsOn = loadIssue(UUID.fromString(req.dependsOnIssueId()), principal.organizationId());
+        Issue issue = loadIssue(issueId);
+        Issue dependsOn = loadIssue(UUID.fromString(req.dependsOnIssueId()));
         if (!issue.getProject().getId().equals(dependsOn.getProject().getId())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Las dependencias deben ser del mismo proyecto");
         }
@@ -279,7 +326,7 @@ public class WorkService {
         dep.setIssue(issue);
         dep.setDependsOnIssue(dependsOn);
         if (req.dependencyType() != null) {
-            dep.setDependencyType(DependencyType.valueOf(req.dependencyType()));
+            dep.setDependencyType(DependencyType.valueOf(req.dependencyType().trim().toUpperCase(Locale.ROOT)));
         }
         dep = dependencyRepository.save(dep);
         return new GanttDto.GanttLinkDto(
@@ -294,15 +341,93 @@ public class WorkService {
     public void removeDependency(ScarPrincipal principal, UUID dependencyId) {
         IssueDependency dep = dependencyRepository.findById(dependencyId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
-        assertOrg(dep.getIssue().getProject().getOrganization().getId(), principal.organizationId());
         dependencyRepository.delete(dep);
+    }
+
+    @Transactional(readOnly = true)
+    public ReportsDto getReports(ScarPrincipal principal, UUID projectId, String startDate, String endDate) {
+        LocalDate start = parseReportDate(startDate);
+        LocalDate end = parseReportDate(endDate);
+        List<Issue> issues;
+        if (projectId != null) {
+            issues = issueRepository.findByProjectId(projectId);
+        } else {
+            issues = issueRepository.findAll();
+        }
+        issues = issues.stream()
+            .filter(issue -> issueMatchesReportRange(issue, start, end))
+            .toList();
+
+        int totalIssues = issues.size();
+        int completed = (int) issues.stream().filter(i -> i.getColumnId() == IssueColumn.done || i.getColumnId() == IssueColumn.closed).count();
+        int criticalOpen = (int) issues.stream()
+            .filter(i -> i.getPriority() == IssuePriority.critical && i.getColumnId() != IssueColumn.done && i.getColumnId() != IssueColumn.closed)
+            .count();
+
+        List<TimeEntry> entries = timeEntryRepository.findAll().stream()
+            .filter(entry -> projectId == null || entry.getIssue().getProject().getId().equals(projectId))
+            .filter(entry -> timeEntryMatchesReportRange(entry, start, end))
+            .toList();
+
+        double totalHours = entries.stream()
+            .mapToInt(TimeEntry::getMinutes)
+            .sum() / 60.0;
+
+        List<ReportsDto.TimePerMemberDto> timePerMember = userRepository.findByActiveTrue().stream()
+            .map(user -> {
+                int userMinutes = entries.stream()
+                    .filter(entry -> entry.getUser().getId().equals(user.getId()))
+                    .mapToInt(TimeEntry::getMinutes)
+                    .sum();
+                return new ReportsDto.TimePerMemberDto(
+                    user.getId().toString(),
+                    user.getFullName(),
+                    userMinutes / 60.0
+                );
+            })
+            .filter(dto -> dto.totalHours() > 0)
+            .sorted((a, b) -> Double.compare(b.totalHours(), a.totalHours()))
+            .toList();
+
+        return new ReportsDto(
+            new ReportsDto.SummaryDto(totalIssues, completed, criticalOpen, totalHours),
+            timePerMember
+        );
+    }
+
+    private LocalDate parseReportDate(String value) {
+        return value == null || value.isBlank() ? null : LocalDate.parse(value);
+    }
+
+    private boolean issueMatchesReportRange(Issue issue, LocalDate start, LocalDate end) {
+        LocalDate created = issue.getCreatedAt().atZone(java.time.ZoneOffset.UTC).toLocalDate();
+        return dateInRange(created, start, end);
+    }
+
+    private boolean timeEntryMatchesReportRange(TimeEntry entry, LocalDate start, LocalDate end) {
+        LocalDate logged = entry.getLoggedAt().atZone(java.time.ZoneOffset.UTC).toLocalDate();
+        return dateInRange(logged, start, end);
+    }
+
+    private boolean dateInRange(LocalDate value, LocalDate start, LocalDate end) {
+        if (start != null && value.isBefore(start)) {
+            return false;
+        }
+        return end == null || !value.isAfter(end);
+    }
+
+    @Transactional(readOnly = true)
+    public WorkBootstrapDto.CardDto getPublicTracking(String token) {
+        Issue issue = issueRepository.findByPublicToken(UUID.fromString(token))
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Ticket no encontrado"));
+        return toCard(issue, loadComments(List.of(issue)), loadTimeEntries(List.of(issue)));
     }
 
     private void processMentions(Issue issue, String text, User author) {
         Matcher matcher = MENTION_PATTERN.matcher(text);
         while (matcher.find()) {
             String username = matcher.group(1);
-            userRepository.findByOrganizationIdAndUsername(issue.getProject().getOrganization().getId(), username)
+            userRepository.findByUsername(username)
                 .ifPresent(user -> notificationService.notifyMention(issue, user, author));
         }
     }
@@ -311,17 +436,9 @@ public class WorkService {
         return issueRepository.findByProjectIdAndColumnIdOrderBySortOrder(projectId, column).size();
     }
 
-    private Issue loadIssue(UUID id, UUID orgId) {
-        Issue issue = issueRepository.findById(id)
+    private Issue loadIssue(UUID id) {
+        return issueRepository.findById(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Incidencia no encontrada"));
-        assertOrg(issue.getProject().getOrganization().getId(), orgId);
-        return issue;
-    }
-
-    private void assertOrg(UUID entityOrg, UUID principalOrg) {
-        if (!entityOrg.equals(principalOrg)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Acceso denegado");
-        }
     }
 
     private Map<UUID, List<IssueComment>> loadComments(List<Issue> issues) {
@@ -366,6 +483,30 @@ public class WorkService {
         return new WorkBootstrapDto.LabelDto(l.getId().toString(), l.getName(), l.getColor());
     }
 
+    private GanttDto.GanttTaskDto toGanttTask(Issue issue, Project project) {
+        LocalDate start = issue.getStartDate() != null
+            ? issue.getStartDate()
+            : issue.getCreatedAt().atZone(java.time.ZoneOffset.UTC).toLocalDate();
+        LocalDate end = issue.getEndDate() != null
+            ? issue.getEndDate()
+            : issue.getDueDate() != null ? issue.getDueDate() : start.plusDays(7);
+        if (end.isBefore(start)) {
+            end = start;
+        }
+        int progress = issue.getColumnId() == IssueColumn.done || issue.getColumnId() == IssueColumn.closed ? 100
+            : issue.getColumnId() == IssueColumn.in_progress || issue.getColumnId() == IssueColumn.review ? 50 : 0;
+        return new GanttDto.GanttTaskDto(
+            issue.getId().toString(),
+            project.getKeyCode() + "-" + issue.getIssueNumber(),
+            issue.getTitle(),
+            start.toString(),
+            end.toString(),
+            issue.getColumnId().name(),
+            issue.getAssignee() != null ? issue.getAssignee().getFullName() : null,
+            progress
+        );
+    }
+
     private WorkBootstrapDto.CardDto toCard(
         Issue i,
         Map<UUID, List<IssueComment>> commentsByIssue,
@@ -402,7 +543,14 @@ public class WorkService {
             )).toList(),
             i.getSortOrder(),
             i.getCreatedAt().toString(),
-            i.getUpdatedAt().toString()
+            i.getUpdatedAt().toString(),
+            i.getRequesterName(),
+            i.getRequesterPhone(),
+            i.getRequesterEmail(),
+            i.getReceptionChannel(),
+            i.getPublicToken() != null ? i.getPublicToken().toString() : null,
+            i.getStartDate() != null ? i.getStartDate().toString() : null,
+            i.getEndDate() != null ? i.getEndDate().toString() : null
         );
     }
 }

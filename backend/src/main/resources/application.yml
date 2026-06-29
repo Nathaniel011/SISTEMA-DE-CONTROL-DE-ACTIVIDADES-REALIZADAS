@@ -4,7 +4,7 @@ spring:
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:scar}
     username: ${DB_USER:scar}
-    password: ${DB_PASSWORD:scar123}
+    password: ${DB_PASSWORD:60465524}
   jpa:
     hibernate:
       ddl-auto: validate

@@ -26,7 +26,6 @@ export class AppLogin {
 
   username = signal('pcondori');
   password = signal('');
-  organizationSlug = signal('scar');
   loading = signal(false);
   error = signal<string | null>(null);
 
@@ -37,7 +36,6 @@ export class AppLogin {
       await this.authService.login({
         username: this.username().trim(),
         password: this.password(),
-        organizationSlug: this.organizationSlug().trim() || 'scar',
       });
     } catch {
       this.error.set('Credenciales inválidas o API no disponible.');

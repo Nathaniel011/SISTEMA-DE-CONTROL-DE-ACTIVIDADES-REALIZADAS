@@ -36,16 +36,8 @@ API en `http://localhost:8080`
 
 ```bash
 cd frontend
-yarn install
-yarn start
+npm install
+npm start
 ```
 
 UI en `http://localhost:4200`
-
-## Credenciales demo
-
-| Campo | Valor |
-|-------|-------|
-| Organización (slug) | `scar` |
-| Usuario | `pcondori` |
-| Contraseña | `admin123` |

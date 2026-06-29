@@ -206,6 +206,15 @@
   min-width: 0.5rem;
 }
 
+.gantt-resize-handle {
+  @apply absolute top-0 h-full w-2 border-0 bg-transparent cursor-ew-resize z-10;
+}
+
+.gantt-resize-handle::after {
+  content: '';
+  @apply absolute top-1/2 left-1/2 h-4 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/80;
+}
+
 .yt-search-bar {
   @apply flex items-center gap-2 px-6 py-3 border-b border-surface-200 bg-surface-50 shrink-0;
 }

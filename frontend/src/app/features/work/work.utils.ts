@@ -1,4 +1,4 @@
-import {WORK_PRIORITIES, WorkPriority} from './work.models';
+import {WORK_PRIORITIES, WorkPriority, WorkCard} from './work.models';
 
 export function formatWorkMinutes(minutes: number): string {
   const h = Math.floor(minutes / 60);
@@ -34,4 +34,20 @@ export function isDueSoon(iso: string | null): boolean {
 export function isOverdue(iso: string | null): boolean {
   if (!iso) return false;
   return new Date(iso) < new Date() && new Date(iso).toDateString() !== new Date().toDateString();
+}
+
+export function getTimeOverrunStatus(card: WorkCard): 'normal' | 'warning' | 'critical' {
+  if (!card.estimateMinutes || card.estimateMinutes === 0) return 'normal';
+  const ratio = card.trackedMinutes / card.estimateMinutes;
+  if (ratio >= 1) return 'critical';
+  if (ratio >= 0.8) return 'warning';
+  return 'normal';
+}
+
+export function getTimeOverrunColor(status: 'normal' | 'warning' | 'critical'): string {
+  switch (status) {
+    case 'warning': return 'bg-amber-100 text-amber-800 border-amber-300';
+    case 'critical': return 'bg-red-100 text-red-800 border-red-300';
+    default: return 'bg-surface-100 text-surface-600 border-surface-300';
+  }
 }

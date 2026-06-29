@@ -16,6 +16,8 @@ import {
   isDueSoon,
   isOverdue,
   priorityMeta,
+  getTimeOverrunStatus,
+  getTimeOverrunColor,
 } from '../work.utils';
 import {WorkCardDrawer} from '../work-card-drawer/work-card-drawer';
 
@@ -122,4 +124,6 @@ export class WorkBoard implements OnInit {
   priorityMeta = priorityMeta;
   isDueSoon = isDueSoon;
   isOverdue = isOverdue;
+  getTimeOverrunStatus = getTimeOverrunStatus;
+  getTimeOverrunColor = getTimeOverrunColor;
 }

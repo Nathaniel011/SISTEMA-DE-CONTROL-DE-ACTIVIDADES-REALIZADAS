@@ -57,6 +57,34 @@ public class Issue {
     @Column(name = "sort_order", nullable = false)
     private int sortOrder = 0;
 
+    @Column(name = "requester_name")
+    private String requesterName;
+
+    @Column(name = "requester_phone")
+    private String requesterPhone;
+
+    @Column(name = "requester_email")
+    private String requesterEmail;
+
+    @Column(name = "reception_channel")
+    private String receptionChannel = "manual";
+
+    @Column(name = "public_token")
+    private UUID publicToken;
+
+    @Column(name = "start_date")
+    private LocalDate startDate;
+
+    @Column(name = "end_date")
+    private LocalDate endDate;
+
+    @PrePersist
+    void onCreate() {
+        if (publicToken == null) {
+            publicToken = UUID.randomUUID();
+        }
+    }
+
     @ManyToMany
     @JoinTable(
         name = "issue_labels",
@@ -101,6 +129,20 @@ public class Issue {
     public void setTrackedMinutes(int trackedMinutes) { this.trackedMinutes = trackedMinutes; }
     public int getSortOrder() { return sortOrder; }
     public void setSortOrder(int sortOrder) { this.sortOrder = sortOrder; }
+    public String getRequesterName() { return requesterName; }
+    public void setRequesterName(String requesterName) { this.requesterName = requesterName; }
+    public String getRequesterPhone() { return requesterPhone; }
+    public void setRequesterPhone(String requesterPhone) { this.requesterPhone = requesterPhone; }
+    public String getRequesterEmail() { return requesterEmail; }
+    public void setRequesterEmail(String requesterEmail) { this.requesterEmail = requesterEmail; }
+    public String getReceptionChannel() { return receptionChannel; }
+    public void setReceptionChannel(String receptionChannel) { this.receptionChannel = receptionChannel; }
+    public UUID getPublicToken() { return publicToken; }
+    public void setPublicToken(UUID publicToken) { this.publicToken = publicToken; }
+    public LocalDate getStartDate() { return startDate; }
+    public void setStartDate(LocalDate startDate) { this.startDate = startDate; }
+    public LocalDate getEndDate() { return endDate; }
+    public void setEndDate(LocalDate endDate) { this.endDate = endDate; }
     public Set<Label> getLabels() { return labels; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }

@@ -9,7 +9,6 @@ import java.util.stream.Collectors;
 
 public record ScarPrincipal(
     UUID userId,
-    UUID organizationId,
     String username,
     Set<UserRole> roles
 ) {

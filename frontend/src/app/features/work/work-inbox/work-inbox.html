@@ -1,0 +1,176 @@
+<div class="yt-content yt-content-standalone work-board-view flex flex-col gap-4">
+  <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+    <div class="flex items-center gap-3">
+      <p-button icon="pi pi-arrow-left" text routerLink="/work/agile" />
+      <div>
+        <h2 class="text-xl font-semibold m-0"> Bandeja de Entrada (Secretaría)</h2>
+        <p class="text-sm text-surface-500 m-0 mt-1">Gestión de solicitudes externas y asignación a técnicos</p>
+      </div>
+    </div>
+    <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
+      <input
+        class="w-full sm:w-64 p-2 border border-surface-200 rounded"
+        placeholder="Buscar solicitudes…"
+        [ngModel]="search()"
+        (ngModelChange)="search.set($event)"
+      />
+      <select
+        class="w-full sm:w-48 p-2 border border-surface-200 rounded"
+        [ngModel]="assigneeFilter()"
+        (ngModelChange)="assigneeFilter.set($event)"
+      >
+        @for (opt of memberFilterOptions(); track opt.value) {
+          <option [ngValue]="opt.value">{{ opt.label }}</option>
+        }
+      </select>
+    </div>
+  </div>
+
+  <div class="work-kanban-scroll">
+    <div class="work-kanban">
+      @for (column of columns; track column.id) {
+        <div
+          class="work-kanban-column"
+          pDroppable="work"
+          (onDrop)="onDrop($event, column.id)"
+        >
+          <div class="work-kanban-column-header">
+            <div class="flex items-center gap-2">
+              <i [class]="column.icon + ' text-primary-500'"></i>
+              <span class="font-semibold">{{ column.title }}</span>
+              <span class="work-kanban-count">{{ cardsForColumn(column.id).length }}</span>
+            </div>
+            @if (column.id === 'registered') {
+              <p-button
+                icon="pi pi-plus"
+                text
+                rounded
+                size="small"
+                (onClick)="startQuickAdd(column.id)"
+              />
+            }
+          </div>
+
+          @if (quickAddColumn() === column.id) {
+            <div class="work-kanban-quick-add">
+              <input
+                class="w-full p-2 border border-surface-200 rounded"
+                placeholder="Título de la solicitud"
+                [ngModel]="quickAddTitle()"
+                (ngModelChange)="quickAddTitle.set($event)"
+                (keyup.enter)="saveQuickAdd(column.id)"
+              />
+              <div class="flex gap-2 mt-2">
+                <p-button label="Añadir" size="small" (onClick)="saveQuickAdd(column.id)" />
+                <p-button label="Cancelar" size="small" severity="secondary" text (onClick)="cancelQuickAdd()" />
+              </div>
+            </div>
+          }
+
+          <div class="work-kanban-cards">
+            @for (card of cardsForColumn(column.id); track card.id) {
+              @let assignee = workService.getMember(card.assigneeId);
+              @let priority = priorityMeta(card.priority);
+              <article
+                class="work-kanban-card"
+                pDraggable="work"
+                (onDragStart)="onDragStart($event, card)"
+                (click)="openCard(card)"
+              >
+                <div class="flex flex-wrap gap-1 mb-2">
+                  @for (labelId of card.labelIds; track labelId) {
+                    @if (workService.getLabel(labelId); as label) {
+                      <span class="work-kanban-label" [style.background-color]="label.color">{{ label.name }}</span>
+                    }
+                  }
+                </div>
+                <h4 class="work-kanban-card-title">{{ card.title }}</h4>
+                @if (card.requesterName) {
+                  <p class="text-xs text-surface-500 mt-1 mb-0">
+                    <i class="pi pi-user"></i> {{ card.requesterName }}
+                    @if (card.requesterPhone) {
+                      <span class="ml-2"><i class="pi pi-phone"></i> {{ card.requesterPhone }}</span>
+                    }
+                  </p>
+                }
+                <div class="work-kanban-card-meta">
+                  <span [class]="priority.tone">
+                    <i [class]="priority.icon"></i>
+                  </span>
+                  @if (card.dueDate) {
+                    <span
+                      class="work-kanban-due"
+                      [class.work-kanban-due-soon]="isDueSoon(card.dueDate)"
+                      [class.work-kanban-due-over]="isOverdue(card.dueDate)"
+                    >
+                      <i class="pi pi-calendar text-xs"></i>
+                      {{ formatDate(card.dueDate) }}
+                    </span>
+                  }
+                  @if (card.trackedMinutes > 0) {
+                    <span 
+                      class="text-xs px-1.5 py-0.5 rounded border"
+                      [class]="getTimeOverrunColor(getTimeOverrunStatus(card))"
+                    >
+                      <i class="pi pi-clock"></i> {{ formatMinutes(card.trackedMinutes) }}
+                    </span>
+                  }
+                  @if (assignee) {
+                    <p-avatar
+                      [label]="assignee.initials"
+                      shape="circle"
+                      style="background-color: #ccfbf1; color: #134e4a; width: 1.5rem; height: 1.5rem; font-size: 0.65rem"
+                    />
+                  }
+                </div>
+                @if (column.id === 'in_assignment') {
+                  <p-button
+                    label="Asignar"
+                    size="small"
+                    class="w-full mt-2"
+                    (click)="$event.stopPropagation(); openAssignDialog(card)"
+                  />
+                }
+              </article>
+            }
+          </div>
+        </div>
+      }
+    </div>
+  </div>
+</div>
+
+<p-dialog
+  [visible]="showAssignDialog()"
+  (visibleChange)="showAssignDialog.set($event)"
+  [modal]="true"
+  [style]="{ width: '400px' }"
+  header="Asignar a Técnico"
+  (onHide)="closeAssignDialog()"
+>
+  <div class="flex flex-col gap-4">
+    <div>
+      <label class="block text-sm font-medium mb-2">Seleccionar técnico:</label>
+      <select
+        class="w-full p-2 border border-surface-200 rounded"
+        [ngModel]="selectedAssigneeId()"
+        (ngModelChange)="selectedAssigneeId.set($event)"
+      >
+        <option value="">Sin asignar</option>
+        @for (member of workService.members(); track member.id) {
+          <option [value]="member.id">{{ member.name }} ({{ member.role }})</option>
+        }
+      </select>
+    </div>
+  </div>
+  <ng-template pTemplate="footer">
+    <p-button label="Cancelar" severity="secondary" text (onClick)="closeAssignDialog()" />
+    <p-button label="Asignar" (onClick)="saveAssignment()" />
+  </ng-template>
+</p-dialog>
+
+<app-work-card-drawer
+  [visible]="drawerOpen()"
+  (visibleChange)="drawerOpen.set($event)"
+  [cardId]="selectedCardId()"
+/>

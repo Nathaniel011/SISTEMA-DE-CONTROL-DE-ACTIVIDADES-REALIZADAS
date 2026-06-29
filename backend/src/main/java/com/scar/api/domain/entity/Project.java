@@ -7,16 +7,12 @@ import java.util.Set;
 import java.util.UUID;
 
 @Entity
-@Table(name = "projects", uniqueConstraints = @UniqueConstraint(columnNames = {"organization_id", "key_code"}))
+@Table(name = "projects", uniqueConstraints = @UniqueConstraint(columnNames = "key_code"))
 public class Project {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
-
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "organization_id", nullable = false)
-    private Organization organization;
 
     @Column(name = "key_code", nullable = false, length = 10)
     private String keyCode;
@@ -41,8 +37,6 @@ public class Project {
     private Instant createdAt = Instant.now();
 
     public UUID getId() { return id; }
-    public Organization getOrganization() { return organization; }
-    public void setOrganization(Organization organization) { this.organization = organization; }
     public String getKeyCode() { return keyCode; }
     public void setKeyCode(String keyCode) { this.keyCode = keyCode; }
     public String getName() { return name; }

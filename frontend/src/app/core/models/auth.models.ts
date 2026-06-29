@@ -1,9 +1,3 @@
-export interface AuthOrganization {
-  id: string;
-  name: string;
-  slug: string;
-}
-
 export interface AuthenticatedUser {
   id: string;
   fullName: string;
@@ -16,7 +10,6 @@ export interface AuthenticatedUser {
 export interface LoginPayload {
   username: string;
   password: string;
-  organizationSlug?: string;
 }
 
 export interface ChangePasswordPayload {

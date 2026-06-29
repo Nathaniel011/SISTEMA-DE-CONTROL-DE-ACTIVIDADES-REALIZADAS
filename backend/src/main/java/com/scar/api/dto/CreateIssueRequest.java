@@ -6,5 +6,9 @@ public record CreateIssueRequest(
     @NotBlank String boardId,
     @NotBlank String title,
     String type,
-    String columnId
+    String columnId,
+    String requesterName,
+    String requesterPhone,
+    String requesterEmail,
+    String receptionChannel
 ) {}

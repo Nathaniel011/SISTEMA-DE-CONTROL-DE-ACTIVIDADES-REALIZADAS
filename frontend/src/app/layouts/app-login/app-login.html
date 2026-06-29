@@ -13,7 +13,7 @@
 
       <div class="mb-6">
         <div class="text-surface-900 dark:text-surface-0 text-xl font-bold mb-2"> Ingresar </div>
-        <span class="text-surface-600 dark:text-surface-200 font-medium">Organización, usuario y contraseña</span>
+        <span class="text-surface-600 dark:text-surface-200 font-medium">Usuario y contraseña</span>
       </div>
 
       @if (error(); as message) {
@@ -21,19 +21,6 @@
       }
 
       <form class="flex flex-col" (ngSubmit)="login()">
-        <p-iconfield class="w-full mb-4">
-          <p-inputicon class="pi pi-building" />
-          <input
-            type="text"
-            pInputText
-            placeholder="Organización (slug)"
-            class="w-full md:w-100"
-            [ngModel]="organizationSlug()"
-            (ngModelChange)="organizationSlug.set($event)"
-            name="organization"
-          />
-        </p-iconfield>
-
         <p-iconfield class="w-full mb-4">
           <p-inputicon class="pi pi-user" />
           <input
@@ -74,7 +61,7 @@
       </form>
 
       <p class="text-xs text-surface-500 mt-6 mb-0 text-center">
-        Demo: org <strong>scar</strong>, usuario <strong>pcondori</strong>, contraseña <strong>admin123</strong>
+        Demo: usuario <strong>pcondori</strong>, contraseña <strong>admin123</strong>
       </p>
     </div>
   </div>

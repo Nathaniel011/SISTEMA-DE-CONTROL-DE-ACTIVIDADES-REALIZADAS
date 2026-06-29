@@ -1,11 +1,9 @@
 package com.scar.api.service;
 
-import com.scar.api.domain.entity.Organization;
 import com.scar.api.domain.entity.User;
 import com.scar.api.domain.enums.UserRole;
 import com.scar.api.dto.LoginRequest;
 import com.scar.api.dto.LoginResponse;
-import com.scar.api.repository.OrganizationRepository;
 import com.scar.api.repository.UserRepository;
 import com.scar.api.security.ScarPrincipal;
 import com.scar.api.security.JwtService;
@@ -15,23 +13,18 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.util.UUID;
-
 @Service
 public class AuthService {
 
-    private final OrganizationRepository organizationRepository;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
 
     public AuthService(
-        OrganizationRepository organizationRepository,
         UserRepository userRepository,
         PasswordEncoder passwordEncoder,
         JwtService jwtService
     ) {
-        this.organizationRepository = organizationRepository;
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
@@ -39,14 +32,7 @@ public class AuthService {
 
     @Transactional(readOnly = true)
     public LoginResponse login(LoginRequest request) {
-        String slug = request.organizationSlug() != null && !request.organizationSlug().isBlank()
-            ? request.organizationSlug()
-            : "scar";
-
-        Organization org = organizationRepository.findBySlug(slug)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Organización no encontrada"));
-
-        User user = userRepository.findByOrganizationIdAndUsername(org.getId(), request.username())
+        User user = userRepository.findByUsername(request.username())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Credenciales inválidas"));
 
         if (!user.isActive() || !passwordEncoder.matches(request.password(), user.getPasswordHash())) {
@@ -54,9 +40,7 @@ public class AuthService {
         }
 
         String token = jwtService.generateToken(user);
-        return new LoginResponse(token, toUserDto(user), new LoginResponse.OrganizationDto(
-            org.getId().toString(), org.getName(), org.getSlug()
-        ));
+        return new LoginResponse(token, toUserDto(user));
     }
 
     @Transactional(readOnly = true)

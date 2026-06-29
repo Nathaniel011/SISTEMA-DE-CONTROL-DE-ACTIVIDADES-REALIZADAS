@@ -105,7 +105,10 @@
                       </span>
                     }
                     @if (card.trackedMinutes > 0) {
-                      <span class="text-xs text-surface-500">
+                      <span 
+                        class="text-xs px-1.5 py-0.5 rounded border"
+                        [class]="getTimeOverrunColor(getTimeOverrunStatus(card))"
+                      >
                         <i class="pi pi-clock"></i> {{ formatMinutes(card.trackedMinutes) }}
                       </span>
                     }

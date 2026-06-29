@@ -9,8 +9,8 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "users", uniqueConstraints = {
-    @UniqueConstraint(columnNames = {"organization_id", "username"}),
-    @UniqueConstraint(columnNames = {"organization_id", "email"})
+    @UniqueConstraint(columnNames = "username"),
+    @UniqueConstraint(columnNames = "email")
 })
 public class User {
 
@@ -18,14 +18,10 @@ public class User {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "organization_id", nullable = false)
-    private Organization organization;
-
-    @Column(nullable = false)
+    @Column(nullable = false, unique = true)
     private String username;
 
-    @Column(nullable = false)
+    @Column(nullable = false, unique = true)
     private String email;
 
     @Column(name = "password_hash", nullable = false)
@@ -49,8 +45,6 @@ public class User {
     private Instant createdAt = Instant.now();
 
     public UUID getId() { return id; }
-    public Organization getOrganization() { return organization; }
-    public void setOrganization(Organization organization) { this.organization = organization; }
     public String getUsername() { return username; }
     public void setUsername(String username) { this.username = username; }
     public String getEmail() { return email; }
