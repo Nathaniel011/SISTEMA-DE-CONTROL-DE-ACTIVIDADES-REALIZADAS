@@ -1,0 +1,327 @@
+/* You can add global styles to this file, and also import other style files */
+
+@import "tailwindcss";
+@import "tailwindcss-primeui";
+@import "primeicons/primeicons.css";
+
+  html {
+    font-size: 14px;
+  }
+
+  body {
+    font-family: 'Lato', sans-serif;
+    margin: 0;
+    padding: 0;
+    min-height: 100%;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    line-height: 1.2;
+  }
+
+  .sidebar {
+    top: 0;
+    left: 0;
+    @apply w-full md:w-56 flex flex-col fixed h-full z-50;
+  }
+
+  .sidebar .sidebar-header {
+    @apply bg-primary-500 flex items-center justify-center p-2 min-h-18;
+  }
+
+  .sidebar .sidebar-content {
+    @apply flex-1 p-4 bg-surface-900 flex flex-col gap-2 text-surface-400 overflow-y-auto;
+  }
+
+  /* Menu Item Wrapper */
+  .menu-item-wrapper {
+    @apply w-full relative;
+  }
+
+  /*.menu-item-wrapper .submenu-desktop {*/
+  /*  @apply fixed top-0 left-0;*/
+  /*}*/
+
+
+  .sidebar-menu-item {
+    @apply flex flex-row items-center gap-3 text-surface-400 px-3 py-2.5 border-transparent rounded-lg w-full hover:text-surface-0 hover:border-surface-700 hover:bg-surface-800 border-1 font-medium transition-all duration-200 no-underline;
+  }
+
+.sidebar-menu-item.active {
+  @apply text-surface-0 bg-surface-800 border-surface-700;
+}
+
+.sidebar-menu-item > i {
+  @apply text-xl leading-5;
+}
+
+.sidebar-menu-item > span {
+  @apply text-sm leading-snug text-left flex-1;
+}
+
+/* Mobile Submenu Dropdown */
+.submenu-mobile {
+  @apply flex flex-col gap-1 mt-1 pl-4 md:hidden;
+  animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.submenu-item {
+  @apply flex items-center gap-3 px-3 py-2 text-surface-400 rounded-lg hover:bg-surface-800 hover:text-surface-0 transition-colors duration-150;
+}
+
+.submenu-item i {
+  @apply text-base;
+}
+
+.submenu-item span {
+  @apply text-base;
+}
+
+/* Desktop Popup Menu Styling */
+.sidebar-popup-menu {
+  @apply hidden md:block ml-24 -mt-16;
+  min-width: 200px;
+}
+
+.sidebar-popup-menu .p-menu-list {
+  @apply p-2 bg-surface-900 rounded-md;
+}
+
+.sidebar-popup-menu .p-menu-item-content {
+  @apply hover:border-surface-700 border-1 border-transparent rounded-lg text-surface-400 hover:text-surface-0 hover:bg-surface-800;
+}
+
+.sidebar-popup-menu .p-menu-item-content a {
+  @apply hover:text-surface-0 hover:border-surface-700 hover:bg-surface-800;
+}
+
+.layout-container {
+  @apply ml-0 md:ml-56;
+}
+
+.layout-container .layout-topbar {
+  @apply min-h-18 px-4 md:px-8 bg-surface-0 border-surface-200 border-b-1 flex justify-between items-center shrink-0;
+}
+
+.layout-container .layout-topbar-work {
+  @apply gap-3;
+}
+
+.layout-container .layout-content {
+  @apply p-4;
+}
+
+.layout-container-work {
+  @apply flex flex-col min-h-screen;
+}
+
+.layout-content-work {
+  @apply p-0 flex-1 min-h-0 overflow-hidden;
+}
+
+.layout-content-work .yt-page {
+  @apply h-full min-h-0;
+}
+
+.users-sort-button {
+  @apply inline-flex items-center gap-2 font-semibold cursor-pointer bg-transparent border-none p-0 text-left;
+}
+
+.app-avatar {
+  @apply flex gap-3 cursor-pointer items-center;
+}
+
+.app-avatar span {
+  @apply font-bold;
+}
+
+/* SCAR — vistas estilo YouTrack */
+.yt-page {
+  @apply flex flex-1 min-h-0 overflow-hidden;
+}
+
+.yt-subnav {
+  @apply w-60 shrink-0 border-r border-surface-200 bg-surface-0 overflow-y-auto p-3 flex flex-col gap-4;
+}
+
+.yt-subnav-section {
+  @apply flex flex-col gap-1;
+}
+
+.yt-subnav-title {
+  @apply text-xs font-semibold uppercase tracking-wide text-surface-500 px-2 py-1;
+}
+
+.yt-subnav-hint {
+  @apply text-sm text-surface-400 px-2;
+}
+
+.yt-subnav-link {
+  @apply flex items-center justify-between gap-2 w-full text-left text-sm px-2 py-2 rounded-lg border-none bg-transparent text-surface-700 cursor-pointer hover:bg-surface-100 transition-colors;
+}
+
+.yt-subnav-link-active {
+  @apply bg-primary-50 text-primary-700 font-medium;
+}
+
+.yt-subnav-badge {
+  @apply text-xs text-surface-500 bg-surface-100 rounded-full px-2 py-0.5 min-w-6 text-center;
+}
+
+.yt-content {
+  @apply flex-1 flex flex-col min-w-0 overflow-hidden bg-surface-0;
+}
+
+.yt-content-standalone {
+  @apply p-6 overflow-y-auto;
+}
+
+.yt-content-header {
+  @apply flex items-center justify-between gap-4 px-6 py-4 border-b border-surface-200 shrink-0;
+}
+
+.yt-content-title {
+  @apply text-xl font-semibold text-surface-900 m-0;
+}
+
+.gantt-panel {
+  min-height: 12rem;
+}
+
+.gantt-row-track {
+  min-height: 3.5rem;
+}
+
+.gantt-bar {
+  min-width: 0.5rem;
+}
+
+.yt-search-bar {
+  @apply flex items-center gap-2 px-6 py-3 border-b border-surface-200 bg-surface-50 shrink-0;
+}
+
+.yt-issues-table .p-datatable-tbody > tr.yt-issue-row {
+  @apply cursor-pointer;
+}
+
+.yt-issues-table .p-datatable-tbody > tr.yt-issue-row:hover {
+  @apply bg-primary-50/40;
+}
+
+.yt-issue-type {
+  @apply w-5 h-5 rounded text-[10px] font-bold text-white flex items-center justify-center shrink-0;
+}
+
+.yt-issue-tag {
+  @apply text-[10px] font-medium px-1.5 py-0.5 rounded shrink-0;
+}
+
+.yt-issue-status {
+  @apply text-sm text-surface-700;
+}
+
+.yt-placeholder {
+  @apply flex flex-col items-center justify-center py-24 px-6;
+}
+
+.yt-placeholder-icon {
+  @apply text-5xl text-primary-400 mb-4;
+}
+
+/* Kanban (Paneles Agile) */
+
+.work-board-tile {
+  @apply block rounded-2xl border border-surface-200 bg-surface-0 overflow-hidden transition-shadow hover:shadow-md;
+}
+
+.work-board-tile-accent {
+  @apply h-2 w-full;
+}
+
+.work-board-tile-body {
+  @apply p-5;
+}
+
+.work-board-key {
+  @apply w-12 h-12 rounded-xl flex items-center justify-center text-white font-bold text-sm shrink-0;
+}
+
+.work-board-view {
+  min-height: calc(100vh - 12rem);
+}
+
+.work-kanban-scroll {
+  @apply overflow-x-auto pb-4;
+}
+
+.work-kanban {
+  @apply flex gap-4 min-h-[32rem] w-max min-w-full;
+}
+
+.work-kanban-column {
+  @apply w-72 shrink-0 flex flex-col rounded-xl bg-surface-100 border border-surface-200 max-h-[calc(100vh-14rem)];
+}
+
+.work-kanban-column-header {
+  @apply flex items-center justify-between px-3 py-3 border-b border-surface-200 sticky top-0 bg-surface-100 rounded-t-xl z-10;
+}
+
+.work-kanban-count {
+  @apply text-xs font-medium bg-surface-200 text-surface-600 rounded-full px-2 py-0.5;
+}
+
+.work-kanban-quick-add {
+  @apply mx-2 mt-2 p-2 rounded-lg bg-surface-0 border border-surface-200;
+}
+
+.work-kanban-cards {
+  @apply flex flex-col gap-2 p-2 overflow-y-auto flex-1;
+}
+
+.work-kanban-card {
+  @apply rounded-xl border border-surface-200 bg-surface-0 p-3 cursor-grab shadow-sm hover:border-primary-300 hover:shadow transition-all active:cursor-grabbing;
+}
+
+.work-kanban-card-title {
+  @apply text-sm font-semibold text-surface-900 m-0 mb-2 leading-snug;
+}
+
+.work-kanban-card-meta {
+  @apply flex flex-wrap items-center gap-2;
+}
+
+.work-kanban-label {
+  @apply text-[10px] font-semibold uppercase tracking-wide text-white px-1.5 py-0.5 rounded;
+}
+
+.work-kanban-due {
+  @apply text-xs text-surface-500 flex items-center gap-1;
+}
+
+.work-kanban-due-soon {
+  @apply text-amber-700 font-medium;
+}
+
+.work-kanban-due-over {
+  @apply text-red-600 font-medium;
+}
+
+.work-label-chip {
+  @apply text-xs font-medium px-3 py-1.5 rounded-full border border-surface-300 bg-surface-0 text-surface-600 transition-colors;
+}
+
+.work-label-chip-active {
+  background-color: color-mix(in srgb, var(--label-color) 18%, white);
+  border-color: var(--label-color);
+  color: var(--label-color);
+}

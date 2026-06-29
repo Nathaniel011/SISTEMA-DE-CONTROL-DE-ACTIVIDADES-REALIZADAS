@@ -1,0 +1,66 @@
+<p-card>
+  <ng-template #content>
+    <form [formGroup]="form" class="p-4 md:p-6 flex flex-col gap-6">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="flex flex-col gap-2">
+          <label for="fullName" class="font-medium">Nombre</label>
+          <input id="fullName" pInputText formControlName="fullName" />
+        </div>
+
+        <div class="flex flex-col gap-2">
+          <label for="username" class="font-medium">Usuario</label>
+          <input id="username" pInputText formControlName="username" [placeholder]="generatedUsername()" />
+          <span class="text-xs text-surface-500">Se genera automáticamente desde el backend.</span>
+        </div>
+
+        <div class="flex flex-col gap-2">
+          <label for="email" class="font-medium">Email</label>
+          <input id="email" pInputText formControlName="email" />
+        </div>
+
+        <div class="flex flex-col gap-2">
+          <label for="roles" class="font-medium">Roles</label>
+          <p-multiselect
+            inputId="roles"
+            formControlName="roles"
+            [options]="roleOptions"
+            optionLabel="label"
+            optionValue="value"
+            display="chip"
+            placeholder="Selecciona uno o más roles"
+            styleClass="w-full"
+          />
+        </div>
+
+        <div class="flex flex-col gap-2">
+          <span class="font-medium">Estado</span>
+          <div class="flex items-center gap-3 min-h-10">
+            <p-toggleswitch formControlName="active" inputId="active" />
+            <span>{{ form.getRawValue().active ? 'Activo' : 'Inactivo' }}</span>
+          </div>
+        </div>
+
+        <div class="flex flex-col gap-2">
+          <span class="font-medium">Contraseña</span>
+          <div class="min-h-10 flex items-center text-sm text-surface-500">
+            Se generará automáticamente al crear el usuario.
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2">
+        @if (isViewMode) {
+          <p-button label="Volver" severity="secondary" text routerLink="/users" />
+          <p-button label="Editar" icon="pi pi-pencil" (onClick)="edit()" />
+        } @else {
+          <p-button label="Cancelar" severity="secondary" text [routerLink]="cancelRoute()" />
+          <p-button
+            [label]="isCreateMode ? 'Crear usuario' : 'Guardar cambios'"
+            [icon]="isCreateMode ? 'pi pi-plus' : 'pi pi-save'"
+            (onClick)="save()"
+          />
+        }
+      </div>
+    </form>
+  </ng-template>
+</p-card>

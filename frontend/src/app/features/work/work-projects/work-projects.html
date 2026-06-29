@@ -1,0 +1,33 @@
+<div class="yt-content yt-content-standalone">
+  <div class="yt-content-header">
+    <h1 class="yt-content-title m-0">Proyectos</h1>
+    <p-button label="Nuevo proyecto" icon="pi pi-plus" severity="primary" (onClick)="openCreate()" />
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+    @for (board of workService.boards(); track board.id) {
+      @let stats = workService.getBoardStats(board.id);
+      <a [routerLink]="['/work/agile', board.id]" class="work-board-tile group no-underline text-inherit">
+        <div class="work-board-tile-accent" [class]="board.accent"></div>
+        <div class="work-board-tile-body">
+          <p-tag [value]="board.key" severity="secondary" />
+          <h3 class="text-lg font-semibold mt-2 group-hover:text-primary-600">{{ board.name }}</h3>
+          <p class="text-sm text-surface-500 m-0">{{ board.description }}</p>
+          <p class="text-sm text-surface-600 mt-3 m-0">{{ stats.total }} incidencias · {{ stats.inProgress }} en curso</p>
+        </div>
+      </a>
+    }
+  </div>
+</div>
+
+<p-dialog header="Nuevo proyecto" [modal]="true" [style]="{ width: '28rem' }" [visible]="createDialogOpen()" (visibleChange)="createDialogOpen.set($event)">
+  <div class="flex flex-col gap-4 pt-2">
+    <input pInputText placeholder="Nombre" class="w-full" [ngModel]="boardName()" (ngModelChange)="boardName.set($event)" />
+    <input pInputText placeholder="Clave (ARG)" class="w-full" maxlength="4" [ngModel]="boardKey()" (ngModelChange)="boardKey.set($event)" />
+    <textarea pTextarea rows="3" placeholder="Descripción" class="w-full" [ngModel]="boardDescription()" (ngModelChange)="boardDescription.set($event)"></textarea>
+  </div>
+  <ng-template #footer>
+    <p-button label="Cancelar" severity="secondary" text (onClick)="createDialogOpen.set(false)" />
+    <p-button label="Crear" icon="pi pi-check" (onClick)="save()" />
+  </ng-template>
+</p-dialog>

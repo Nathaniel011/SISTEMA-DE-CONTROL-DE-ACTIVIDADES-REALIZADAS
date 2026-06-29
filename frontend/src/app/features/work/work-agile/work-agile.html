@@ -1,0 +1,14 @@
+<div class="yt-content yt-content-standalone">
+  <div class="yt-content-header">
+    <h1 class="yt-content-title m-0">Paneles de Agile</h1>
+  </div>
+  <p class="text-surface-500">Selecciona un proyecto para abrir su tablero Kanban.</p>
+  <div class="flex flex-col gap-2 mt-4 max-w-md">
+    @for (board of workService.boards(); track board.id) {
+      <a [routerLink]="['/work/agile', board.id]" class="yt-subnav-link justify-between no-underline">
+        <span>{{ board.name }}</span>
+        <i class="pi pi-arrow-right"></i>
+      </a>
+    }
+  </div>
+</div>

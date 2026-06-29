@@ -1,0 +1,107 @@
+package com.scar.api.domain.entity;
+
+import com.scar.api.domain.enums.*;
+import jakarta.persistence.*;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.UUID;
+
+@Entity
+@Table(name = "issues", uniqueConstraints = @UniqueConstraint(columnNames = {"project_id", "issue_number"}))
+public class Issue {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "project_id", nullable = false)
+    private Project project;
+
+    @Column(name = "issue_number", nullable = false)
+    private int issueNumber;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private IssueType type;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "column_id", nullable = false)
+    private IssueColumn columnId;
+
+    @Column(nullable = false, length = 500)
+    private String title;
+
+    @Column(columnDefinition = "TEXT")
+    private String description;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private IssuePriority priority = IssuePriority.medium;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "assignee_id")
+    private User assignee;
+
+    @Column(name = "due_date")
+    private LocalDate dueDate;
+
+    @Column(name = "estimate_minutes")
+    private Integer estimateMinutes;
+
+    @Column(name = "tracked_minutes", nullable = false)
+    private int trackedMinutes = 0;
+
+    @Column(name = "sort_order", nullable = false)
+    private int sortOrder = 0;
+
+    @ManyToMany
+    @JoinTable(
+        name = "issue_labels",
+        joinColumns = @JoinColumn(name = "issue_id"),
+        inverseJoinColumns = @JoinColumn(name = "label_id")
+    )
+    private Set<Label> labels = new HashSet<>();
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private Instant createdAt = Instant.now();
+
+    @Column(name = "updated_at", nullable = false)
+    private Instant updatedAt = Instant.now();
+
+    @PreUpdate
+    void onUpdate() {
+        updatedAt = Instant.now();
+    }
+
+    public UUID getId() { return id; }
+    public Project getProject() { return project; }
+    public void setProject(Project project) { this.project = project; }
+    public int getIssueNumber() { return issueNumber; }
+    public void setIssueNumber(int issueNumber) { this.issueNumber = issueNumber; }
+    public IssueType getType() { return type; }
+    public void setType(IssueType type) { this.type = type; }
+    public IssueColumn getColumnId() { return columnId; }
+    public void setColumnId(IssueColumn columnId) { this.columnId = columnId; }
+    public String getTitle() { return title; }
+    public void setTitle(String title) { this.title = title; }
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
+    public IssuePriority getPriority() { return priority; }
+    public void setPriority(IssuePriority priority) { this.priority = priority; }
+    public User getAssignee() { return assignee; }
+    public void setAssignee(User assignee) { this.assignee = assignee; }
+    public LocalDate getDueDate() { return dueDate; }
+    public void setDueDate(LocalDate dueDate) { this.dueDate = dueDate; }
+    public Integer getEstimateMinutes() { return estimateMinutes; }
+    public void setEstimateMinutes(Integer estimateMinutes) { this.estimateMinutes = estimateMinutes; }
+    public int getTrackedMinutes() { return trackedMinutes; }
+    public void setTrackedMinutes(int trackedMinutes) { this.trackedMinutes = trackedMinutes; }
+    public int getSortOrder() { return sortOrder; }
+    public void setSortOrder(int sortOrder) { this.sortOrder = sortOrder; }
+    public Set<Label> getLabels() { return labels; }
+    public Instant getCreatedAt() { return createdAt; }
+    public Instant getUpdatedAt() { return updatedAt; }
+}

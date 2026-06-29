@@ -1,0 +1,41 @@
+<div class="yt-content yt-content-standalone">
+  <div class="yt-content-header">
+    <h1 class="yt-content-title m-0">Paneles</h1>
+    <p-button label="Ver incidencias" icon="pi pi-list" severity="primary" routerLink="/work/issues" />
+  </div>
+
+  @let m = metrics();
+  <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+    <div class="rounded-2xl border border-surface-200 p-5 bg-primary-500 text-white">
+      <div class="text-sm opacity-90">Incidencias abiertas</div>
+      <div class="text-3xl font-bold mt-1">{{ m.open }}</div>
+    </div>
+    <div class="rounded-2xl border border-surface-200 p-5 bg-surface-0">
+      <div class="text-sm text-surface-500">En curso</div>
+      <div class="text-3xl font-bold mt-1 text-primary-600">{{ m.inProgress }}</div>
+    </div>
+    <div class="rounded-2xl border border-surface-200 p-5 bg-surface-0">
+      <div class="text-sm text-surface-500">Sin asignar</div>
+      <div class="text-3xl font-bold mt-1 text-amber-600">{{ m.unassigned }}</div>
+    </div>
+    <div class="rounded-2xl border border-surface-200 p-5 bg-surface-0">
+      <div class="text-sm text-surface-500">Tiempo registrado</div>
+      <div class="text-3xl font-bold mt-1">{{ formatMinutes(m.trackedMinutes) }}</div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+    <div class="rounded-2xl border border-surface-200 p-5 bg-surface-0">
+      <h3 class="font-semibold mb-4 m-0">Incidencias por estado</h3>
+      <div class="h-64">
+        <p-chart type="bar" [data]="statusChart()" [options]="chartOptions" />
+      </div>
+    </div>
+    <div class="rounded-2xl border border-surface-200 p-5 bg-surface-0">
+      <h3 class="font-semibold mb-4 m-0">Incidencias por prioridad</h3>
+      <div class="h-64">
+        <p-chart type="bar" [data]="priorityChart()" [options]="chartOptions" />
+      </div>
+    </div>
+  </div>
+</div>

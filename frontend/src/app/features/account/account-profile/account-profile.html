@@ -1,0 +1,36 @@
+<p-card>
+  <ng-template #header>
+    <div class="px-6 pt-6">
+      <div class="text-xl font-semibold">Mi perfil</div>
+      <div class="text-sm text-surface-500">Datos del usuario autenticado</div>
+    </div>
+  </ng-template>
+
+  <ng-template #content>
+    <form [formGroup]="form" class="grid grid-cols-1 md:grid-cols-2 gap-4 p-6">
+      <div class="flex flex-col gap-2">
+        <label for="profile-fullName" class="font-medium">Nombre</label>
+        <input id="profile-fullName" pInputText formControlName="fullName" />
+      </div>
+
+      <div class="flex flex-col gap-2">
+        <label for="profile-username" class="font-medium">Usuario</label>
+        <input id="profile-username" pInputText formControlName="username" />
+      </div>
+
+      <div class="flex flex-col gap-2">
+        <label for="profile-email" class="font-medium">Email</label>
+        <input id="profile-email" pInputText formControlName="email" />
+      </div>
+
+      <div class="flex flex-col gap-2">
+        <label for="profile-roles" class="font-medium">Roles</label>
+        <input id="profile-roles" pInputText formControlName="roles" />
+      </div>
+
+      <div class="md:col-span-2 flex justify-end">
+        <p-button label="Guardar cambios" icon="pi pi-save" (onClick)="save()" />
+      </div>
+    </form>
+  </ng-template>
+</p-card>

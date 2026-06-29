@@ -1,0 +1,50 @@
+<div class="menu-item-wrapper">
+  <!-- Main Menu Item -->
+  <a
+    [routerLink]="item().routerLink || '#'"
+    routerLinkActive="active"
+    [routerLinkActiveOptions]="{ paths: 'subset', queryParams: 'ignored', fragment: 'ignored', matrixParams: 'ignored' }"
+    class="sidebar-menu-item"
+    [class.active]="isExpanded() && isMobile()"
+    (click)="handleClick($event)">
+    <i [class]="item().icon"></i>
+    <span>{{ item().label }}</span>
+    @if(hasSubmenu()){
+      <i class="pi ml-auto" [class]="getAngleIcon()"></i>
+    }
+  </a>
+
+
+  <!-- Mobile Dropdown Submenu -->
+  @if(isMobile() && hasSubmenu() && isExpanded()){
+    <div class="submenu-mobile">
+      @for(subItem of item().items; track subItem.routerLink ?? subItem.label + '-' + $index){
+        <a
+          [routerLink]="subItem.routerLink || '#'"
+          class="submenu-item"
+          (click)="handleSubItemClick()">
+          <i [class]="subItem.icon"></i>
+          <span>{{ subItem.label }}</span>
+        </a>
+      }
+    </div>
+  }
+  <!-- Desktop Popup Menu -->
+  @if(!isMobile() && hasSubmenu()){
+    <p-menu
+      #popupMenu
+      [popup]="true"
+      [model]="[]"
+      appendTo="body"
+      styleClass="sidebar-popup-menu">
+      <ng-template #item let-menuItem>
+        <a
+          [routerLink]="menuItem.routerLink"
+          class="flex items-center gap-2 p-2 w-full hover:bg-surface-100 rounded transition-colors">
+          <i [class]="menuItem.icon"></i>
+          <span>{{ menuItem.label }}</span>
+        </a>
+      </ng-template>
+    </p-menu>
+  }
+</div>
