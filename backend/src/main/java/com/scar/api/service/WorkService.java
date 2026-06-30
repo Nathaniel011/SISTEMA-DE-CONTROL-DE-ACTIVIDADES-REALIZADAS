@@ -33,6 +33,7 @@ public class WorkService {
     private final ActiveTimerRepository activeTimerRepository;
     private final IssueDependencyRepository dependencyRepository;
     private final NotificationService notificationService;
+    private final AttachmentRepository attachmentRepository;
 
     public WorkService(
         ProjectRepository projectRepository,
@@ -43,7 +44,8 @@ public class WorkService {
         TimeEntryRepository timeEntryRepository,
         ActiveTimerRepository activeTimerRepository,
         IssueDependencyRepository dependencyRepository,
-        NotificationService notificationService
+        NotificationService notificationService,
+        AttachmentRepository attachmentRepository
     ) {
         this.projectRepository = projectRepository;
         this.issueRepository = issueRepository;
@@ -54,6 +56,7 @@ public class WorkService {
         this.activeTimerRepository = activeTimerRepository;
         this.dependencyRepository = dependencyRepository;
         this.notificationService = notificationService;
+        this.attachmentRepository = attachmentRepository;
     }
 
     @Transactional(readOnly = true)
@@ -175,7 +178,7 @@ public class WorkService {
         Issue issue = loadIssue(issueId);
         IssueColumn oldColumn = issue.getColumnId();
         IssueColumn newColumn = IssueColumn.valueOf(req.columnId());
-        
+
         // Role-based permission checks
         User user = userRepository.findById(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
@@ -195,15 +198,39 @@ public class WorkService {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Los técnicos no pueden mover incidencias a Hecho o Cerrada. Solo pueden mover a En Revisión o En Curso");
             }
         }
-        
+
+        // Cross-board move support
+        if (req.targetBoardId() != null && !req.targetBoardId().isBlank() && !issue.getProject().getId().toString().equals(req.targetBoardId())) {
+            UUID targetProjId = UUID.fromString(req.targetBoardId());
+            Project dest = projectRepository.findById(targetProjId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Proyecto destino no encontrado"));
+
+            // assign new project and a fresh issue number in destination
+            int nextNum = issueRepository.findTopByProjectIdOrderByIssueNumberDesc(dest.getId())
+                .map(i -> i.getIssueNumber() + 1).orElse(1);
+
+            issue.setProject(dest);
+            issue.setIssueNumber(nextNum);
+            issue.setColumnId(newColumn);
+            issue.setSortOrder(req.targetIndex() != null ? req.targetIndex() : nextIssueOrder(dest.getId(), newColumn));
+            issue = issueRepository.save(issue);
+
+            if (!oldColumn.equals(newColumn)) {
+                notificationService.notifyStatusChange(issue, principal.userId(), oldColumn.name(), newColumn.name());
+            }
+
+            return toCard(issue, loadComments(List.of(issue)), loadTimeEntries(List.of(issue)));
+        }
+
+        // Same-project move
         issue.setColumnId(newColumn);
         issue.setSortOrder(req.targetIndex() != null ? req.targetIndex() : nextIssueOrder(issue.getProject().getId(), newColumn));
         issue = issueRepository.save(issue);
-        
+
         if (!oldColumn.equals(newColumn)) {
             notificationService.notifyStatusChange(issue, principal.userId(), oldColumn.name(), newColumn.name());
         }
-        
+
         return toCard(issue, loadComments(List.of(issue)), loadTimeEntries(List.of(issue)));
     }
 
@@ -373,12 +400,16 @@ public class WorkService {
             .mapToInt(TimeEntry::getMinutes)
             .sum() / 60.0;
 
+        // Group time entries by user ID for efficient lookup (avoid N+1)
+        Map<UUID, Integer> minutesByUser = entries.stream()
+            .collect(Collectors.groupingBy(
+                e -> e.getUser().getId(),
+                Collectors.summingInt(TimeEntry::getMinutes)
+            ));
+
         List<ReportsDto.TimePerMemberDto> timePerMember = userRepository.findByActiveTrue().stream()
             .map(user -> {
-                int userMinutes = entries.stream()
-                    .filter(entry -> entry.getUser().getId().equals(user.getId()))
-                    .mapToInt(TimeEntry::getMinutes)
-                    .sum();
+                int userMinutes = minutesByUser.getOrDefault(user.getId(), 0);
                 return new ReportsDto.TimePerMemberDto(
                     user.getId().toString(),
                     user.getFullName(),
@@ -421,6 +452,55 @@ public class WorkService {
         Issue issue = issueRepository.findByPublicToken(UUID.fromString(token))
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Ticket no encontrado"));
         return toCard(issue, loadComments(List.of(issue)), loadTimeEntries(List.of(issue)));
+    }
+
+    @Transactional
+    public WorkBootstrapDto.BoardDto createProject(ScarPrincipal principal, CreateProjectRequest request) {
+        // Generate key from name (first 4 letters, uppercase)
+        String key = request.name().trim().substring(0, Math.min(4, request.name().trim().length())).toUpperCase();
+        
+        // Check if key already exists, append number if needed
+        String finalKey = key;
+        int counter = 1;
+        while (projectRepository.findByKeyCode(finalKey).isPresent()) {
+            finalKey = key + counter;
+            counter++;
+        }
+
+        Project project = new Project();
+        project.setName(request.name().trim());
+        project.setDescription(request.description() != null ? request.description().trim() : null);
+        project.setKeyCode(finalKey);
+        
+        // Add creator as member
+        User creator = userRepository.findById(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+        project.getMembers().add(creator);
+        
+        project = projectRepository.save(project);
+        return toBoard(project);
+    }
+
+    @Transactional
+    public WorkBootstrapDto.BoardDto updateProjectMembers(UUID projectId, UpdateProjectMembersRequest request) {
+        Project project = projectRepository.findById(projectId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Proyecto no encontrado"));
+
+        for (UpdateProjectMembersRequest.MemberAction action : request.actions()) {
+            User user = userRepository.findById(UUID.fromString(action.userId()))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+
+            if ("add".equals(action.action())) {
+                if (!project.getMembers().contains(user)) {
+                    project.getMembers().add(user);
+                }
+            } else if ("remove".equals(action.action())) {
+                project.getMembers().remove(user);
+            }
+        }
+
+        project = projectRepository.save(project);
+        return toBoard(project);
     }
 
     private void processMentions(Issue issue, String text, User author) {
@@ -514,6 +594,7 @@ public class WorkService {
     ) {
         List<IssueComment> comments = commentsByIssue.getOrDefault(i.getId(), List.of());
         List<TimeEntry> times = timeByIssue.getOrDefault(i.getId(), List.of());
+        List<Attachment> attachments = attachmentRepository.findByIssueIdOrderByCreatedAtDesc(i.getId());
         return new WorkBootstrapDto.CardDto(
             i.getId().toString(),
             i.getProject().getId().toString(),
@@ -550,7 +631,15 @@ public class WorkService {
             i.getReceptionChannel(),
             i.getPublicToken() != null ? i.getPublicToken().toString() : null,
             i.getStartDate() != null ? i.getStartDate().toString() : null,
-            i.getEndDate() != null ? i.getEndDate().toString() : null
+            i.getEndDate() != null ? i.getEndDate().toString() : null,
+            attachments.stream().map(a -> new WorkBootstrapDto.AttachmentDto(
+                a.getId().toString(),
+                a.getFileName(),
+                a.getFileUrl(),
+                a.getMimeType(),
+                a.getFileSize(),
+                a.getCreatedAt().toString()
+            )).toList()
         );
     }
 }

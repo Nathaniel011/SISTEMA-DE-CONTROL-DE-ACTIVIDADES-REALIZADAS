@@ -1,21 +1,36 @@
 <div class="yt-content yt-content-standalone">
   <div class="yt-content-header">
-    <h1 class="yt-content-title m-0">Proyectos</h1>
-    <p-button label="Nuevo proyecto" icon="pi pi-plus" severity="primary" (onClick)="openCreate()" />
+    <h1 class="yt-content-title m-0">Tableros</h1>
+    <p-button label="Nuevo tablero" icon="pi pi-plus" severity="primary" (onClick)="openCreate()" />
   </div>
 
   <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-    @for (board of workService.boards(); track board.id) {
+    @for (board of rootBoards(); track board.id) {
       @let stats = workService.getBoardStats(board.id);
-      <a [routerLink]="['/work/agile', board.id]" class="work-board-tile group no-underline text-inherit">
+      @let members = getBoardMembers(board.id);
+      <div class="work-board-tile">
         <div class="work-board-tile-accent" [class]="board.accent"></div>
         <div class="work-board-tile-body">
-          <p-tag [value]="board.key" severity="secondary" />
-          <h3 class="text-lg font-semibold mt-2 group-hover:text-primary-600">{{ board.name }}</h3>
-          <p class="text-sm text-surface-500 m-0">{{ board.description }}</p>
+          <div class="flex items-start justify-between">
+            <div class="flex-1">
+              <h3 class="text-lg font-semibold">{{ board.name }}</h3>
+              <p class="text-sm text-surface-500 m-0">{{ board.description }}</p>
+            </div>
+            <p-button icon="pi pi-users" size="small" text rounded (onClick)="openMembersDialog(board.id)" />
+          </div>
           <p class="text-sm text-surface-600 mt-3 m-0">{{ stats.total }} incidencias · {{ stats.inProgress }} en curso</p>
+          <div class="mt-2 flex flex-wrap gap-1">
+            @for (member of members; track member.id) {
+              <p-tag [value]="member.initials" [title]="member.name" severity="secondary" size="small" />
+            }
+          </div>
+          <div class="mt-4 space-y-2">
+            @for (child of childBoardsFor(board.id); track child.id) {
+              <a [routerLink]="['/work/agile', child.id]" class="block text-sm text-primary-700 hover:underline">• {{ child.name }}</a>
+            }
+          </div>
         </div>
-      </a>
+      </div>
     }
   </div>
 </div>
@@ -23,11 +38,28 @@
 <p-dialog header="Nuevo proyecto" [modal]="true" [style]="{ width: '28rem' }" [visible]="createDialogOpen()" (visibleChange)="createDialogOpen.set($event)">
   <div class="flex flex-col gap-4 pt-2">
     <input pInputText placeholder="Nombre" class="w-full" [ngModel]="boardName()" (ngModelChange)="boardName.set($event)" />
-    <input pInputText placeholder="Clave (ARG)" class="w-full" maxlength="4" [ngModel]="boardKey()" (ngModelChange)="boardKey.set($event)" />
     <textarea pTextarea rows="3" placeholder="Descripción" class="w-full" [ngModel]="boardDescription()" (ngModelChange)="boardDescription.set($event)"></textarea>
   </div>
   <ng-template #footer>
     <p-button label="Cancelar" severity="secondary" text (onClick)="createDialogOpen.set(false)" />
     <p-button label="Crear" icon="pi pi-check" (onClick)="save()" />
+  </ng-template>
+</p-dialog>
+
+<p-dialog header="Gestionar miembros" [modal]="true" [style]="{ width: '32rem' }" [visible]="membersDialogOpen()" (visibleChange)="membersDialogOpen.set($event)">
+  <div class="flex flex-col gap-4 pt-2">
+    <p-multiselect
+      [options]="memberOptions()"
+      optionLabel="label"
+      optionValue="value"
+      [ngModel]="selectedMembers()"
+      (ngModelChange)="selectedMembers.set($event)"
+      placeholder="Seleccionar miembros"
+      class="w-full"
+    />
+  </div>
+  <ng-template #footer>
+    <p-button label="Cancelar" severity="secondary" text (onClick)="membersDialogOpen.set(false)" />
+    <p-button label="Guardar" icon="pi pi-check" (onClick)="saveMembers()" />
   </ng-template>
 </p-dialog>

@@ -9,7 +9,7 @@ export const WORK_NAV_ITEMS: WorkNavItem[] = [
   { id: 'inbox', label: 'Bandeja de entrada', icon: 'pi pi-inbox', route: '/work/inbox' },
   { id: 'issues', label: 'Incidencias', icon: 'pi pi-list', route: '/work/issues' },
   { id: 'dashboards', label: 'Paneles', icon: 'pi pi-th-large', route: '/work/dashboards' },
-  { id: 'agile', label: 'Paneles de Agile', icon: 'pi pi-objects-column', route: '/work/agile' },
+  { id: 'agile', label: 'Tableros', icon: 'pi pi-objects-column', route: '/work/agile' },
   { id: 'reports', label: 'Informes', icon: 'pi pi-chart-bar', route: '/work/reports' },
   { id: 'projects', label: 'Proyectos', icon: 'pi pi-folder', route: '/work/projects' },
   { id: 'knowledge', label: 'Base de conocimiento', icon: 'pi pi-book', route: '/work/knowledge' },

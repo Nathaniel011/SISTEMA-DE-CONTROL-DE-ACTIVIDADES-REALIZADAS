@@ -39,7 +39,17 @@ public record WorkBootstrapDto(
         String receptionChannel,
         String publicToken,
         String startDate,
-        String endDate
+        String endDate,
+        List<AttachmentDto> attachments
+    ) {}
+
+    public record AttachmentDto(
+        String id,
+        String fileName,
+        String fileUrl,
+        String mimeType,
+        Long fileSize,
+        String createdAt
     ) {}
     public record ActiveTimerDto(String cardId, String startedAt, String note) {}
 }

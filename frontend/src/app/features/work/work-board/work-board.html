@@ -10,7 +10,8 @@
         </div>
       </div>
       <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
-        <p-iconfield class="w-full sm:w-64">
+          <p-button label="Crear tarjeta" icon="pi pi-plus" class="mr-2" (onClick)="openCreateModal()" />
+          <p-iconfield class="w-full sm:w-64">
           <p-inputicon class="pi pi-search" />
           <input
             pInputText
@@ -37,8 +38,9 @@
         @for (column of columns; track column.id) {
           <div
             class="work-kanban-column"
-            pDroppable="work"
-            (onDrop)="onDrop($event, column.id)"
+            draggable="false"
+            (dragover)="allowDrop($event)"
+            (drop)="onDrop($event, column.id)"
           >
             <div class="work-kanban-column-header">
               <div class="flex items-center gap-2">
@@ -78,8 +80,8 @@
                 @let priority = priorityMeta(card.priority);
                 <article
                   class="work-kanban-card"
-                  pDraggable="work"
-                  (onDragStart)="onDragStart($event, card)"
+                  draggable="true"
+                  (dragstart)="onDragStart($event, card)"
                   (click)="openCard(card)"
                 >
                   <div class="flex flex-wrap gap-1 mb-2">
@@ -139,4 +141,10 @@
   [visible]="drawerOpen()"
   (visibleChange)="drawerOpen.set($event)"
   [cardId]="selectedCardId()"
-/>
+  />
+
+  <app-card-modal
+    [visible]="modalOpen()"
+    (visibleChange)="modalOpen.set($event)"
+    [cardId]="modalCardId()"
+  ></app-card-modal>

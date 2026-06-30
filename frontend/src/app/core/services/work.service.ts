@@ -258,12 +258,26 @@ export class WorkService {
     return Math.floor((Date.now() - new Date(timer.startedAt).getTime()) / 1000);
   }
 
-  createBoard(payload: Pick<WorkBoard, 'name' | 'description' | 'key'>): WorkBoard {
+  createBoard(payload: Pick<WorkBoard, 'name' | 'description'>): WorkBoard {
+    if (environment.useApi) {
+      void firstValueFrom(this.workApi.createProject(payload)).then(board => {
+        this.patch({ boards: [...this.boards(), board] });
+      });
+      return {
+        id: 'pending',
+        name: payload.name,
+        description: payload.description,
+        key: 'PENDING',
+        accent: 'bg-teal-500',
+        memberIds: [],
+        createdAt: new Date().toISOString(),
+      };
+    }
     const board: WorkBoard = {
       id: newBoardId(),
       name: payload.name.trim(),
-      description: payload.description.trim(),
-      key: payload.key.trim().toUpperCase().slice(0, 4),
+      description: payload.description?.trim() ?? '',
+      key: payload.name.trim().toUpperCase().slice(0, 4),
       accent: 'bg-teal-500',
       memberIds: this.members().slice(0, 2).map(m => m.id),
       createdAt: new Date().toISOString(),
@@ -296,6 +310,7 @@ export class WorkService {
         dueDate: null,
         estimateMinutes: null,
         trackedMinutes: 0,
+        attachments: [],
         comments: [],
         timeEntries: [],
         order: 0,
@@ -322,6 +337,7 @@ export class WorkService {
       dueDate: null,
       estimateMinutes: null,
       trackedMinutes: 0,
+      attachments: [],
       comments: [],
       timeEntries: [],
       order: this.nextOrder(boardId, columnId),
@@ -409,6 +425,53 @@ export class WorkService {
 
     const rest = without.filter(
       c => c.boardId !== boardId || (c.columnId !== toColumnId && c.columnId !== fromColumn)
+    );
+
+    this.patch({ cards: [...rest, ...newSource, ...newDest] });
+  }
+
+  moveCardToBoard(cardId: string, targetBoardId: string, targetColumnId: WorkColumnId, targetIndex?: number): void {
+    if (environment.useApi) {
+      void firstValueFrom(this.workApi.moveIssue(cardId, targetColumnId, targetIndex, targetBoardId)).then(updated => {
+        this.replaceCard(updated);
+      });
+      return;
+    }
+
+    const all = this.cards();
+    const current = all.find(c => c.id === cardId);
+    if (!current) return;
+
+    const sourceBoardId = current.boardId;
+    const fromColumn = current.columnId;
+    const without = all.filter(c => c.id !== cardId);
+
+    // Recalculate source column orders
+    const newSource = without
+      .filter(c => c.boardId === sourceBoardId && c.columnId === fromColumn)
+      .sort((a, b) => a.order - b.order)
+      .map((c, i) => ({ ...c, order: i }));
+
+    // Prepare destination column and insert moved card
+    const dest = without
+      .filter(c => c.boardId === targetBoardId && c.columnId === targetColumnId)
+      .sort((a, b) => a.order - b.order);
+
+    const insertAt = targetIndex ?? dest.length;
+    const movedCard: WorkCard = {
+      ...current,
+      boardId: targetBoardId,
+      columnId: targetColumnId,
+      issueNumber: this.nextIssueNumber(targetBoardId),
+      updatedAt: new Date().toISOString(),
+      order: insertAt,
+    };
+
+    dest.splice(insertAt, 0, movedCard);
+    const newDest = dest.map((c, i) => ({ ...c, order: i, columnId: targetColumnId }));
+
+    const rest = without.filter(
+      c => !(c.boardId === sourceBoardId && c.columnId === fromColumn) && !(c.boardId === targetBoardId && c.columnId === targetColumnId)
     );
 
     this.patch({ cards: [...rest, ...newSource, ...newDest] });

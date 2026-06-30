@@ -12,7 +12,7 @@ Monorepo con frontend Angular y backend Spring Boot para gestión de actividades
 ## Requisitos
 
 - Node.js 20+ y Yarn
-- Java 21 y Maven
+- Java 25 y Maven
 - Docker (opcional, para PostgreSQL)
 
 ## Inicio rápido

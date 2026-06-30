@@ -128,8 +128,11 @@ export class WorkApiService {
     return this.http.put<WorkCard>(`${this.base}/api/issues/${id}`, payload);
   }
 
-  moveIssue(id: string, columnId: WorkColumnId, targetIndex?: number): Observable<WorkCard> {
-    return this.http.patch<WorkCard>(`${this.base}/api/issues/${id}/move`, { columnId, targetIndex });
+  moveIssue(id: string, columnId: WorkColumnId, targetIndex?: number, targetBoardId?: string): Observable<WorkCard> {
+    const payload: any = { columnId };
+    if (targetIndex !== undefined && targetIndex !== null) payload.targetIndex = targetIndex;
+    if (targetBoardId) payload.targetBoardId = targetBoardId;
+    return this.http.patch<WorkCard>(`${this.base}/api/issues/${id}/move`, payload);
   }
 
   deleteIssue(id: string): Observable<void> {
@@ -218,5 +221,24 @@ export class WorkApiService {
 
   whiteboardEventsUrl(id: string, token: string): string {
     return `${this.base}/api/whiteboards/${id}/events?access_token=${encodeURIComponent(token)}`;
+  }
+
+  uploadFile(file: File, issueId: string): Observable<any> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('issueId', issueId);
+    return this.http.post<any>(`${this.base}/api/files/upload`, formData);
+  }
+
+  deleteFile(fileId: string): Observable<void> {
+    return this.http.delete<void>(`${this.base}/api/files/${fileId}`);
+  }
+
+  createProject(payload: { name: string; description?: string }): Observable<any> {
+    return this.http.post<any>(`${this.base}/api/projects`, payload);
+  }
+
+  updateProjectMembers(projectId: string, actions: { userId: string; action: string }[]): Observable<any> {
+    return this.http.patch<any>(`${this.base}/api/projects/${projectId}/members`, { actions });
   }
 }

@@ -9,8 +9,12 @@ import {DatePicker} from 'primeng/datepicker';
 import {InputNumber} from 'primeng/inputnumber';
 import {Avatar} from 'primeng/avatar';
 import {Tabs, Tab, TabList, TabPanel, TabPanels} from 'primeng/tabs';
+import {FileUpload} from 'primeng/fileupload';
+import {Image} from 'primeng/image';
 import {WorkService} from '../../../core/services/work.service';
-import {WORK_PRIORITIES, WorkCard} from '../work.models';
+import {WorkApiService} from '../../../core/services/work-api.service';
+import {firstValueFrom} from 'rxjs';
+import {WORK_PRIORITIES, WorkCard, WorkAttachment} from '../work.models';
 import {formatWorkDate, formatWorkMinutes, formatWorkSeconds, priorityMeta} from '../work.utils';
 
 @Component({
@@ -30,11 +34,14 @@ import {formatWorkDate, formatWorkMinutes, formatWorkSeconds, priorityMeta} from
     TabList,
     TabPanel,
     TabPanels,
+    FileUpload,
+    Image,
   ],
   templateUrl: './work-card-drawer.html',
 })
 export class WorkCardDrawer implements OnDestroy {
   workService = inject(WorkService);
+  workApi = inject(WorkApiService);
 
   elapsedSeconds = signal(0);
   private tick?: ReturnType<typeof setInterval>;
@@ -46,6 +53,7 @@ export class WorkCardDrawer implements OnDestroy {
   commentText = signal('');
   timeMinutes = signal(30);
   timeNote = signal('');
+  uploading = signal(false);
 
   titleDraft = signal('');
   descriptionDraft = signal('');
@@ -159,6 +167,37 @@ export class WorkCardDrawer implements OnDestroy {
 
   onTabChange(value: string | number | undefined): void {
     this.activeTab.set(value ?? '0');
+  }
+
+  async onFileUpload(event: any): Promise<void> {
+    const id = this.cardId();
+    if (!id || event.files.length === 0) return;
+
+    this.uploading.set(true);
+    try {
+      for (const file of event.files) {
+        await firstValueFrom(this.workApi.uploadFile(file, id));
+      }
+      // Reload card to get updated attachments
+      await this.workService.loadFromApi();
+    } finally {
+      this.uploading.set(false);
+    }
+  }
+
+  async deleteAttachment(attachmentId: string): Promise<void> {
+    await firstValueFrom(this.workApi.deleteFile(attachmentId));
+    await this.workService.loadFromApi();
+  }
+
+  isImage(mimeType: string): boolean {
+    return mimeType.startsWith('image/');
+  }
+
+  formatFileSize(bytes: number): string {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   }
 
   formatMinutes = formatWorkMinutes;

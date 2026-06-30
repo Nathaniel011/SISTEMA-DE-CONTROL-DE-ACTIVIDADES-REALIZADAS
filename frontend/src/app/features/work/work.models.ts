@@ -15,8 +15,8 @@ export const WORK_ISSUE_TYPES: {
 ];
 
 export const WORK_STATUS_LABELS: Record<WorkColumnId, string> = {
-  registered: '📥 Registrada',
-  in_assignment: '🔄 En Asignación',
+  registered: 'Registrada',
+  in_assignment: 'En Asignación',
   backlog: 'Backlog',
   todo: 'Por hacer',
   in_progress: 'En curso',
@@ -53,6 +53,15 @@ export interface WorkTimeEntry {
   loggedAt: string;
 }
 
+export interface WorkAttachment {
+  id: string;
+  fileName: string;
+  fileUrl: string;
+  mimeType: string;
+  fileSize: number;
+  createdAt: string;
+}
+
 export interface WorkCard {
   id: string;
   boardId: string;
@@ -67,6 +76,7 @@ export interface WorkCard {
   dueDate: string | null;
   estimateMinutes: number | null;
   trackedMinutes: number;
+  attachments: WorkAttachment[];
   comments: WorkComment[];
   timeEntries: WorkTimeEntry[];
   order: number;
@@ -88,6 +98,7 @@ export interface WorkBoard {
   key: string;
   accent: string;
   memberIds: string[];
+  parentBoardId?: string | null;
   createdAt: string;
 }
 
@@ -106,14 +117,22 @@ export interface WorkActiveTimer {
 }
 
 export const WORK_COLUMNS: { id: WorkColumnId; title: string; icon: string }[] = [
-  { id: 'registered', title: '📥 Registrada', icon: 'pi pi-inbox' },
-  { id: 'in_assignment', title: '🔄 En Asignación', icon: 'pi pi-arrows-alt' },
+  { id: 'registered', title: 'Registrada', icon: 'pi pi-inbox' },
+  { id: 'in_assignment', title: 'En Asignación', icon: 'pi pi-arrows-alt' },
   { id: 'backlog', title: 'Backlog', icon: 'pi pi-inbox' },
   { id: 'todo', title: 'Por hacer', icon: 'pi pi-list' },
   { id: 'in_progress', title: 'En progreso', icon: 'pi pi-spinner' },
   { id: 'review', title: 'En revisión', icon: 'pi pi-eye' },
   { id: 'done', title: 'Hecho', icon: 'pi pi-check-circle' },
   { id: 'closed', title: 'Cerrada', icon: 'pi pi-lock' },
+];
+
+export const AGILE_COLUMNS: { id: WorkColumnId; title: string; icon: string }[] = [
+  { id: 'in_assignment', title: 'Asignado', icon: 'pi pi-arrows-alt' },
+  { id: 'todo', title: 'Por hacer', icon: 'pi pi-list' },
+  { id: 'in_progress', title: 'En progreso', icon: 'pi pi-spinner' },
+  { id: 'review', title: 'En revisión', icon: 'pi pi-eye' },
+  { id: 'closed', title: 'Cerrado', icon: 'pi pi-lock' },
 ];
 
 export const WORK_PRIORITIES: { value: WorkPriority; label: string; icon: string; tone: string }[] = [
@@ -186,6 +205,7 @@ export function createDefaultWorkState(): WorkState {
       dueDate: '2026-05-20',
       estimateMinutes: 480,
       trackedMinutes: 210,
+      attachments: [],
       comments: [
         {
           id: 'cm1',
@@ -216,6 +236,7 @@ export function createDefaultWorkState(): WorkState {
       dueDate: '2026-05-25',
       estimateMinutes: 360,
       trackedMinutes: 0,
+      attachments: [],
       comments: [],
       timeEntries: [],
       order: 0,
@@ -236,6 +257,7 @@ export function createDefaultWorkState(): WorkState {
       dueDate: '2026-05-18',
       estimateMinutes: 180,
       trackedMinutes: 175,
+      attachments: [],
       comments: [],
       timeEntries: [
         { id: 't3', memberId: 'm3', minutes: 175, note: 'Pruebas E2E login', loggedAt: '2026-05-13T16:00:00.000Z' },
@@ -258,6 +280,7 @@ export function createDefaultWorkState(): WorkState {
       dueDate: null,
       estimateMinutes: 600,
       trackedMinutes: 0,
+      attachments: [],
       comments: [],
       timeEntries: [],
       order: 0,
@@ -278,6 +301,7 @@ export function createDefaultWorkState(): WorkState {
       dueDate: '2026-05-10',
       estimateMinutes: 120,
       trackedMinutes: 130,
+      attachments: [],
       comments: [],
       timeEntries: [],
       order: 0,
@@ -298,6 +322,7 @@ export function createDefaultWorkState(): WorkState {
       dueDate: '2026-05-16',
       estimateMinutes: 240,
       trackedMinutes: 95,
+      attachments: [],
       comments: [],
       timeEntries: [],
       order: 0,
@@ -318,6 +343,7 @@ export function createDefaultWorkState(): WorkState {
       dueDate: '2026-05-22',
       estimateMinutes: 300,
       trackedMinutes: 0,
+      attachments: [],
       comments: [],
       timeEntries: [],
       order: 0,

@@ -4,5 +4,6 @@ import jakarta.validation.constraints.NotBlank;
 
 public record MoveIssueRequest(
     @NotBlank String columnId,
-    Integer targetIndex
+    Integer targetIndex,
+    String targetBoardId
 ) {}

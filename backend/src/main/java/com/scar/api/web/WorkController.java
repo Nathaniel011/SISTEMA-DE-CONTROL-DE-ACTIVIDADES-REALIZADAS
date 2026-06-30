@@ -134,4 +134,21 @@ public class WorkController {
     public WorkBootstrapDto.CardDto getPublicTracking(@PathVariable String token) {
         return workService.getPublicTracking(token);
     }
+
+    @PostMapping("/projects")
+    public WorkBootstrapDto.BoardDto createProject(
+        @AuthenticationPrincipal ScarPrincipal principal,
+        @Valid @RequestBody CreateProjectRequest request
+    ) {
+        return workService.createProject(principal, request);
+    }
+
+    @PatchMapping("/projects/{id}/members")
+    public WorkBootstrapDto.BoardDto updateProjectMembers(
+        @AuthenticationPrincipal ScarPrincipal principal,
+        @PathVariable UUID id,
+        @Valid @RequestBody UpdateProjectMembersRequest request
+    ) {
+        return workService.updateProjectMembers(id, request);
+    }
 }

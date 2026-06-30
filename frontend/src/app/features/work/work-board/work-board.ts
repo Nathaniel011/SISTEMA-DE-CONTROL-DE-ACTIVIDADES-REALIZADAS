@@ -9,7 +9,7 @@ import {Select} from 'primeng/select';
 import {DragDropModule} from 'primeng/dragdrop';
 import {Avatar} from 'primeng/avatar';
 import {WorkService} from '../../../core/services/work.service';
-import {WORK_COLUMNS, WorkCard, WorkColumnId} from '../work.models';
+import {AGILE_COLUMNS, WorkCard, WorkColumnId} from '../work.models';
 import {
   formatWorkDate,
   formatWorkMinutes,
@@ -20,6 +20,7 @@ import {
   getTimeOverrunColor,
 } from '../work.utils';
 import {WorkCardDrawer} from '../work-card-drawer/work-card-drawer';
+import {CardModal} from '../card-modal/card-modal';
 
 @Component({
   selector: 'app-work-board',
@@ -34,6 +35,7 @@ import {WorkCardDrawer} from '../work-card-drawer/work-card-drawer';
     DragDropModule,
     Avatar,
     WorkCardDrawer,
+    CardModal,
   ],
   templateUrl: './work-board.html',
 })
@@ -42,7 +44,7 @@ export class WorkBoard implements OnInit {
   router = inject(Router);
   workService = inject(WorkService);
 
-  columns = WORK_COLUMNS;
+  columns = AGILE_COLUMNS;
   boardId = signal('');
   search = signal('');
   assigneeFilter = signal<string | null>(null);
@@ -50,6 +52,8 @@ export class WorkBoard implements OnInit {
   drawerOpen = signal(false);
   quickAddColumn = signal<WorkColumnId | null>(null);
   quickAddTitle = signal('');
+  modalOpen = signal(false);
+  modalCardId = signal<string | null>(null);
 
   board = computed(() => this.workService.getBoard(this.boardId()));
 
@@ -87,6 +91,11 @@ export class WorkBoard implements OnInit {
     this.drawerOpen.set(true);
   }
 
+  openCreateModal(): void {
+    this.modalCardId.set(null);
+    this.modalOpen.set(true);
+  }
+
   startQuickAdd(columnId: WorkColumnId): void {
     this.quickAddColumn.set(columnId);
     this.quickAddTitle.set('');
@@ -117,6 +126,10 @@ export class WorkBoard implements OnInit {
     if (cardId) {
       this.workService.moveCard(cardId, columnId);
     }
+  }
+
+  allowDrop(event: DragEvent): void {
+    event.preventDefault();
   }
 
   formatMinutes = formatWorkMinutes;

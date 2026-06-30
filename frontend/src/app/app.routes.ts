@@ -48,7 +48,7 @@ export const routes: Routes = [
             component: WorkDashboards,
             data: { breadcrumb: 'Paneles' },
           },
-          { path: 'agile', component: WorkAgile, data: { breadcrumb: 'Paneles de Agile' } },
+          { path: 'agile', component: WorkAgile, data: { breadcrumb: 'Tableros' } },
           { path: 'agile/:boardId', component: WorkBoard, data: { breadcrumb: 'Tablero' } },
           { path: 'inbox', component: WorkInbox, data: { breadcrumb: 'Bandeja de Entrada' } },
           {

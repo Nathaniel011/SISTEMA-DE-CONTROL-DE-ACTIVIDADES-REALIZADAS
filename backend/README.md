@@ -4,7 +4,7 @@ Backend REST en **Spring Boot 3.4** + **PostgreSQL 16** para SCAR (incidencias, 
 
 ## Requisitos
 
-- Java 21
+- Java 25
 - Maven 3.9+
 - PostgreSQL 16 (Docker o instalación local)
 
