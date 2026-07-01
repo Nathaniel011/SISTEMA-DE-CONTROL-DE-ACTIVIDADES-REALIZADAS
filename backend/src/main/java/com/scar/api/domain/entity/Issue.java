@@ -78,6 +78,16 @@ public class Issue {
     @Column(name = "end_date")
     private LocalDate endDate;
 
+    @Column(name = "assigned_at")
+    private Instant assignedAt;
+
+    @Column(name = "completed_at")
+    private Instant completedAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "board_list_id")
+    private BoardList boardList;
+
     @PrePersist
     void onCreate() {
         if (publicToken == null) {
@@ -143,6 +153,12 @@ public class Issue {
     public void setStartDate(LocalDate startDate) { this.startDate = startDate; }
     public LocalDate getEndDate() { return endDate; }
     public void setEndDate(LocalDate endDate) { this.endDate = endDate; }
+    public Instant getAssignedAt() { return assignedAt; }
+    public void setAssignedAt(Instant assignedAt) { this.assignedAt = assignedAt; }
+    public Instant getCompletedAt() { return completedAt; }
+    public void setCompletedAt(Instant completedAt) { this.completedAt = completedAt; }
+    public BoardList getBoardList() { return boardList; }
+    public void setBoardList(BoardList boardList) { this.boardList = boardList; }
     public Set<Label> getLabels() { return labels; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }

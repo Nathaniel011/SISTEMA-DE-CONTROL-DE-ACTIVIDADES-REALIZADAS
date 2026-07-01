@@ -11,7 +11,7 @@ import {WorkService} from '../../../core/services/work.service';
 @Component({
   selector: 'app-work-agile',
   standalone: true,
-  imports: [RouterLink, Button, Dialog, InputText, Textarea, Select, FormsModule],
+  imports: [RouterLink, Button, Dialog, InputText, Textarea,  FormsModule],
   templateUrl: './work-agile.html',
 })
 export class WorkAgile implements OnInit {
@@ -52,7 +52,7 @@ export class WorkAgile implements OnInit {
       key: this.boardKey().trim() || name.slice(0, 4),
       description: this.boardDescription(),
       parentBoardId: this.parentBoardId(),
-    });
+    }as any);
     this.createDialogOpen.set(false);
   }
 }

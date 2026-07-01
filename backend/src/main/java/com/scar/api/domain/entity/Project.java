@@ -1,5 +1,6 @@
 package com.scar.api.domain.entity;
 
+import com.scar.api.domain.enums.ProjectType;
 import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.HashSet;
@@ -25,6 +26,10 @@ public class Project {
     @Column(nullable = false)
     private String accent = "bg-teal-500";
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private ProjectType type = ProjectType.STANDARD;
+
     @ManyToMany
     @JoinTable(
         name = "project_members",
@@ -45,6 +50,8 @@ public class Project {
     public void setDescription(String description) { this.description = description; }
     public String getAccent() { return accent; }
     public void setAccent(String accent) { this.accent = accent; }
+    public ProjectType getType() { return type; }
+    public void setType(ProjectType type) { this.type = type; }
     public Set<User> getMembers() { return members; }
     public Instant getCreatedAt() { return createdAt; }
 }

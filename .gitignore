@@ -45,5 +45,8 @@ backend/target/
 .DS_Store
 Thumbs.db
 
+# Local dev secrets
+dev/local.env
+
 # Legacy / local artifacts
 argos-api/

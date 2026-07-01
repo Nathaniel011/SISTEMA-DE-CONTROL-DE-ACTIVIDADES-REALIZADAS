@@ -137,7 +137,15 @@ public class WorkService {
         if (req.priority() != null) issue.setPriority(IssuePriority.valueOf(req.priority()));
         if (req.assigneeId() != null) {
             UUID assigneeId = req.assigneeId().isBlank() ? null : UUID.fromString(req.assigneeId());
-            issue.setAssignee(assigneeId == null ? null : userRepository.findById(assigneeId).orElse(null));
+            User newAssignee = assigneeId == null ? null : userRepository.findById(assigneeId).orElse(null);
+            User oldAssignee = issue.getAssignee();
+            
+            issue.setAssignee(newAssignee);
+            
+            // Set assignedAt when assigning to a user for the first time
+            if (newAssignee != null && oldAssignee == null && issue.getAssignedAt() == null) {
+                issue.setAssignedAt(Instant.now());
+            }
         }
         if (req.dueDate() != null) {
             issue.setDueDate(req.dueDate().isBlank() ? null : LocalDate.parse(req.dueDate()));
@@ -185,17 +193,10 @@ public class WorkService {
         
         Set<UserRole> roles = user.getRoles();
         
-        // SECRETARY can only move between REGISTERED and IN_ASSIGNMENT
-        if (roles.contains(UserRole.SECRETARY) && !roles.contains(UserRole.ADMIN)) {
+        // SECRETARY can only move between REGISTERED, IN_ASSIGNMENT and TODO
+        if (roles.contains(UserRole.SECRETARY) && !roles.contains(UserRole.ADMIN) && !roles.contains(UserRole.CHIEF)) {
             if (newColumn != IssueColumn.registered && newColumn != IssueColumn.in_assignment && newColumn != IssueColumn.todo) {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN, "La Secretaría solo puede mover incidencias entre Registrada, En Asignación y Pendiente");
-            }
-        }
-        
-        // MEMBER (TECNICO) cannot move to DONE or CLOSED
-        if (roles.contains(UserRole.MEMBER) && !roles.contains(UserRole.ADMIN) && !roles.contains(UserRole.SUPERVISOR)) {
-            if (newColumn == IssueColumn.done || newColumn == IssueColumn.closed) {
-                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Los técnicos no pueden mover incidencias a Hecho o Cerrada. Solo pueden mover a En Revisión o En Curso");
             }
         }
 
@@ -213,6 +214,13 @@ public class WorkService {
             issue.setIssueNumber(nextNum);
             issue.setColumnId(newColumn);
             issue.setSortOrder(req.targetIndex() != null ? req.targetIndex() : nextIssueOrder(dest.getId(), newColumn));
+            
+            // Set completedAt when moving to DONE or CLOSED
+            if ((newColumn == IssueColumn.done || newColumn == IssueColumn.closed) 
+                && (oldColumn != IssueColumn.done && oldColumn != IssueColumn.closed)) {
+                issue.setCompletedAt(Instant.now());
+            }
+            
             issue = issueRepository.save(issue);
 
             if (!oldColumn.equals(newColumn)) {
@@ -225,6 +233,19 @@ public class WorkService {
         // Same-project move
         issue.setColumnId(newColumn);
         issue.setSortOrder(req.targetIndex() != null ? req.targetIndex() : nextIssueOrder(issue.getProject().getId(), newColumn));
+        
+        // Set completedAt when moving to DONE or CLOSED
+        if ((newColumn == IssueColumn.done || newColumn == IssueColumn.closed) 
+            && (oldColumn != IssueColumn.done && oldColumn != IssueColumn.closed)) {
+            issue.setCompletedAt(Instant.now());
+        }
+        
+        // Reset completedAt when moving away from DONE or CLOSED
+        if ((oldColumn == IssueColumn.done || oldColumn == IssueColumn.closed) 
+            && (newColumn != IssueColumn.done && newColumn != IssueColumn.closed)) {
+            issue.setCompletedAt(null);
+        }
+        
         issue = issueRepository.save(issue);
 
         if (!oldColumn.equals(newColumn)) {

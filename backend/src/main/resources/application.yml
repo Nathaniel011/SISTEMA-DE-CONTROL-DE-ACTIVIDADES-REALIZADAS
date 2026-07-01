@@ -23,6 +23,8 @@ server:
     context-path: /
 
 scar:
+  db:
+    auto-provision: true
   jwt:
     secret: ${JWT_SECRET:scar-dev-secret-change-in-production-min-256-bits-long-key!!}
     expiration-ms: ${JWT_EXPIRATION_MS:86400000}

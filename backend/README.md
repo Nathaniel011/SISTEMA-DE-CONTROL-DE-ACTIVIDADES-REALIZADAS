@@ -6,23 +6,14 @@ Backend REST en **Spring Boot 3.4** + **PostgreSQL 16** para SCAR (incidencias, 
 
 - Java 25
 - Maven 3.9+
-- PostgreSQL 16 (Docker o instalación local)
+- PostgreSQL 16+ en local (servicio activo en `localhost:5432`)
 
 ## Base de datos
 
-### Con Docker (desde la raíz del monorepo)
+Crea la base y el usuario (desde la raíz del monorepo):
 
 ```bash
-docker compose up -d
-```
-
-### Sin Docker (PostgreSQL local)
-
-Crea la base y el usuario:
-
-```sql
-CREATE USER scar WITH PASSWORD 'scar123';
-CREATE DATABASE scar OWNER scar;
+psql -U postgres -f scripts/init-local-db.sql
 ```
 
 La configuración por defecto está en `src/main/resources/application.yml`:
@@ -31,9 +22,11 @@ La configuración por defecto está en `src/main/resources/application.yml`:
 |-----------|-------|
 | URL | `jdbc:postgresql://localhost:5432/scar` |
 | Usuario | `scar` |
-| Contraseña | `scar123` |
+| Contraseña | `60465524` |
 
-Flyway aplica automáticamente `V1__init_schema.sql` al arrancar.
+Puedes sobreescribir host, puerto, nombre, usuario y contraseña con las variables de entorno `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER` y `DB_PASSWORD`.
+
+Flyway aplica automáticamente las migraciones en `classpath:db/migration` al arrancar.
 
 ## Ejecutar la API
 

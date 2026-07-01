@@ -11,33 +11,83 @@ Monorepo con frontend Angular y backend Spring Boot para gestión de actividades
 
 ## Requisitos
 
-- Node.js 20+ y Yarn
-- Java 25 y Maven
-- Docker (opcional, para PostgreSQL)
+- Node.js 20+
+- Java 21+ y Maven
+- PostgreSQL 16+ instalado en local (servicio en `localhost:5432`)
+- pgAdmin (opcional, para inspeccionar la base de datos)
 
-## Inicio rápido
+## Arranque rápido (3 pasos)
 
-### Base de datos
+### 1. PostgreSQL local
 
-```bash
-docker compose up -d
+Asegúrate de que el servicio **PostgreSQL 16** esté en ejecución en Windows. Debe escuchar en el puerto **5432**.
+
+### 2. Configuración única (solo la primera vez)
+
+Copia el archivo de entorno y pon la contraseña de tu usuario `postgres` local:
+
+```powershell
+copy dev\local.env.example dev\local.env
+notepad dev\local.env
 ```
 
-### Backend
+Cambia `DB_ADMIN_PASSWORD=CAMBIA_ESTO` por tu contraseña real. El backend usará eso **solo la primera vez** para crear automáticamente la base `scar` y el usuario `scar`.
 
-```bash
+### 3. Arrancar el sistema
+
+Opción A — script (abre backend y frontend en ventanas separadas):
+
+```powershell
+.\start-dev.ps1
+```
+
+Opción B — desde VS Code / Cursor: **Terminal → Run Task → SCAR: Full Stack**
+
+Opción C — manualmente en dos terminales:
+
+```powershell
+# Terminal 1
 cd backend
 mvn spring-boot:run
-```
 
-API en `http://localhost:8080`
-
-### Frontend
-
-```bash
+# Terminal 2
 cd frontend
-npm install
 npm start
 ```
 
-UI en `http://localhost:4200`
+| Servicio | URL |
+|----------|-----|
+| Frontend | http://localhost:4200 |
+| Backend API | http://localhost:8080 |
+| PostgreSQL | localhost:5432 / base `scar` |
+
+Abre **pgAdmin** y conecta con:
+
+| Campo | Valor |
+|-------|-------|
+| Host | `localhost` |
+| Puerto | `5432` |
+| Base | `scar` |
+| Usuario | `scar` |
+| Contraseña | `60465524` |
+
+Para importar el servidor preconfigurado: en pgAdmin ve a **Tools → Import/Export Servers** e importa `dev/pgadmin-servers.json`.
+
+## Credenciales de la aplicación
+
+| Campo | Valor |
+|-------|-------|
+| Usuario admin | `pcondori` |
+| Contraseña | `admin123` |
+
+## Variables de entorno (`dev/local.env`)
+
+| Variable | Descripción | Valor por defecto |
+|----------|-------------|-------------------|
+| `DB_HOST` | Host PostgreSQL | `localhost` |
+| `DB_PORT` | Puerto | `5432` |
+| `DB_NAME` | Base de datos | `scar` |
+| `DB_USER` | Usuario de la app | `scar` |
+| `DB_PASSWORD` | Contraseña de la app | `60465524` |
+| `DB_ADMIN_USER` | Superusuario para auto-crear la base | `postgres` |
+| `DB_ADMIN_PASSWORD` | Contraseña del superusuario | *(obligatoria la 1.ª vez)* |

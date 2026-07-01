@@ -1,42 +1,66 @@
 {
-  // For more information, visit: https://go.microsoft.com/fwlink/?LinkId=733558
   "version": "2.0.0",
   "tasks": [
     {
-      "type": "npm",
-      "script": "start",
+      "label": "SCAR: Backend",
+      "type": "shell",
+      "command": "mvn spring-boot:run",
+      "options": {
+        "cwd": "${workspaceFolder}/backend",
+        "envFile": "${workspaceFolder}/dev/local.env"
+      },
       "isBackground": true,
       "problemMatcher": {
-        "owner": "typescript",
-        "pattern": "$tsc",
+        "owner": "java",
+        "pattern": {
+          "regexp": "^(.*)$",
+          "file": 1,
+          "location": 2,
+          "message": 3
+        },
         "background": {
           "activeOnStart": true,
-          "beginsPattern": {
-            "regexp": "(.*?)"
-          },
-          "endsPattern": {
-            "regexp": "bundle generation complete"
-          }
+          "beginsPattern": "^.*Starting ScarApiApplication.*$",
+          "endsPattern": "^.*Started ScarApiApplication.*$"
         }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "scar"
       }
     },
     {
-      "type": "npm",
-      "script": "test",
+      "label": "SCAR: Frontend",
+      "type": "shell",
+      "command": "npm start",
+      "options": {
+        "cwd": "${workspaceFolder}/frontend"
+      },
       "isBackground": true,
       "problemMatcher": {
         "owner": "typescript",
         "pattern": "$tsc",
         "background": {
           "activeOnStart": true,
-          "beginsPattern": {
-            "regexp": "(.*?)"
-          },
-          "endsPattern": {
-            "regexp": "bundle generation complete"
-          }
+          "beginsPattern": ".",
+          "endsPattern": "Application bundle generation complete|Local:"
         }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "scar"
       }
+    },
+    {
+      "label": "SCAR: Full Stack",
+      "dependsOn": [
+        "SCAR: Backend",
+        "SCAR: Frontend"
+      ],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
     }
   ]
 }

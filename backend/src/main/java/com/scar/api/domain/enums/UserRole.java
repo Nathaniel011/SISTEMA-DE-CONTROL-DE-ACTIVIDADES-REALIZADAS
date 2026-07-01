@@ -2,7 +2,10 @@ package com.scar.api.domain.enums;
 
 public enum UserRole {
     ADMIN,
-    SUPERVISOR,
+    CHIEF,
     SECRETARY,
-    MEMBER
+    MAINTENANCE,
+    PROGRAMMER,
+    NETWORK,
+    ELECTRICITY
 }

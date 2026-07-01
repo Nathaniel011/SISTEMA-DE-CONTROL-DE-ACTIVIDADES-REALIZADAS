@@ -270,6 +270,7 @@ export class WorkService {
         key: 'PENDING',
         accent: 'bg-teal-500',
         memberIds: [],
+        type: 'standard',
         createdAt: new Date().toISOString(),
       };
     }
@@ -280,6 +281,7 @@ export class WorkService {
       key: payload.name.trim().toUpperCase().slice(0, 4),
       accent: 'bg-teal-500',
       memberIds: this.members().slice(0, 2).map(m => m.id),
+      type: 'standard',
       createdAt: new Date().toISOString(),
     };
     this.patch({ boards: [...this.boards(), board] });

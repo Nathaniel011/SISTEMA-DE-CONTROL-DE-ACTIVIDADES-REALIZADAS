@@ -25,9 +25,13 @@ export interface UsersSortOption {
 }
 
 export const USER_ROLE_OPTIONS = [
-  {label: 'Administrador', value: 'Administrador'},
-  {label: 'Supervisor', value: 'Supervisor'},
-  {label: 'Operador', value: 'Operador'},
+  {label: 'Administrador', value: 'ADMIN'},
+  {label: 'Jefe', value: 'CHIEF'},
+  {label: 'Secretaria', value: 'SECRETARY'},
+  {label: 'Mantenimiento', value: 'MAINTENANCE'},
+  {label: 'Programador', value: 'PROGRAMMER'},
+  {label: 'Redes', value: 'NETWORK'},
+  {label: 'Electricidad', value: 'ELECTRICITY'},
 ];
 
 export const USERS_SORT_OPTIONS: UsersSortOption[] = [

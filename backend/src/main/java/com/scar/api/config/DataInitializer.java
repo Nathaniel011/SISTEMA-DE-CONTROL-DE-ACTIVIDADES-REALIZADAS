@@ -27,10 +27,10 @@ public class DataInitializer {
             if (userRepository.count() > 0) return;
 
             User admin = user("Pedro Condori", "pcondori", "pedro.condori@scar.local", "PC", Set.of(UserRole.ADMIN), passwordEncoder);
-            User dev = user("Ana Ríos", "arios", "ana.rios@scar.local", "AR", Set.of(UserRole.MEMBER), passwordEncoder);
-            User qa = user("Luis Mendoza", "lmendoza", "luis.mendoza@scar.local", "LM", Set.of(UserRole.MEMBER), passwordEncoder);
-            User po = user("Sofía Vega", "svega", "sofia.vega@scar.local", "SV", Set.of(UserRole.SUPERVISOR), passwordEncoder);
-            userRepository.saveAll(java.util.List.of(admin, dev, qa, po));
+            User chief = user("Sofía Vega", "svega", "sofia.vega@scar.local", "SV", Set.of(UserRole.CHIEF), passwordEncoder);
+            User secretary = user("Ana Ríos", "arios", "ana.rios@scar.local", "AR", Set.of(UserRole.SECRETARY), passwordEncoder);
+            User programmer = user("Luis Mendoza", "lmendoza", "luis.mendoza@scar.local", "LM", Set.of(UserRole.PROGRAMMER), passwordEncoder);
+            userRepository.saveAll(java.util.List.of(admin, chief, secretary, programmer));
 
             Label l1 = label("Frontend", "#14b8a6");
             Label l2 = label("Backend", "#0d9488");
@@ -38,22 +38,22 @@ public class DataInitializer {
             Label l4 = label("Mejora", "#8b5cf6");
             labelRepository.saveAll(java.util.List.of(l1, l2, l3, l4));
 
-            Project arg = project("ARG", "Plataforma SCAR", "Evolución del ecosistema operativo.", Set.of(admin, dev, po));
-            Project spr = project("SPR", "Sprint actual", "Entregables de la iteración en curso.", Set.of(admin, dev, qa));
+            Project arg = project("ARG", "Plataforma SCAR", "Evolución del ecosistema operativo.", Set.of(admin, chief, programmer));
+            Project spr = project("SPR", "Sprint actual", "Entregables de la iteración en curso.", Set.of(admin, secretary, programmer));
             projectRepository.saveAll(java.util.List.of(arg, spr));
 
             Issue i1 = issue(arg, 1, IssueType.feature, IssueColumn.in_progress, "Diseñar módulo de trabajo Kanban",
-                dev, IssuePriority.high, LocalDate.now().plusDays(10), Set.of(l1, l4), 210);
+                programmer, IssuePriority.high, LocalDate.now().plusDays(10), Set.of(l1, l4), 210);
             Issue i2 = issue(arg, 2, IssueType.task, IssueColumn.todo, "Integrar API REST Spring Boot",
-                dev, IssuePriority.medium, LocalDate.now().plusDays(15), Set.of(l2), 0);
+                programmer, IssuePriority.medium, LocalDate.now().plusDays(15), Set.of(l2), 0);
             Issue i3 = issue(arg, 3, IssueType.bug, IssueColumn.review, "Revisar flujo de autenticación JWT",
-                qa, IssuePriority.medium, LocalDate.now().plusDays(8), Set.of(l3), 175);
+                programmer, IssuePriority.medium, LocalDate.now().plusDays(8), Set.of(l3), 175);
             Issue i4 = issue(arg, 4, IssueType.task, IssueColumn.backlog, "Diagrama de Gantt con dependencias",
-                po, IssuePriority.low, null, Set.of(l1), 0);
+                chief, IssuePriority.low, null, Set.of(l1), 0);
             Issue i5 = issue(arg, 5, IssueType.chore, IssueColumn.done, "Definir preset de colores teal",
                 admin, IssuePriority.medium, LocalDate.now().minusDays(2), Set.of(l1), 130);
             Issue i6 = issue(spr, 1, IssueType.bug, IssueColumn.in_progress, "Corregir validación formularios",
-                qa, IssuePriority.critical, LocalDate.now().plusDays(5), Set.of(l3, l2), 95);
+                programmer, IssuePriority.critical, LocalDate.now().plusDays(5), Set.of(l3, l2), 95);
             issueRepository.saveAll(java.util.List.of(i1, i2, i3, i4, i5, i6));
 
             IssueDependency dep = new IssueDependency();

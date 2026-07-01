@@ -16,17 +16,7 @@
   <p-dialog header="Nuevo tablero" [modal]="true" [style]="{ width: '28rem' }" [visible]="createDialogOpen()" (visibleChange)="createDialogOpen.set($event)">
     <div class="flex flex-col gap-4 pt-2">
       <input pInputText placeholder="Nombre" class="w-full" [ngModel]="boardName()" (ngModelChange)="boardName.set($event)" />
-      <input pInputText placeholder="Clave (ARG)" class="w-full" maxlength="4" [ngModel]="boardKey()" (ngModelChange)="boardKey.set($event)" />
       <textarea pTextarea rows="3" placeholder="Descripción" class="w-full" [ngModel]="boardDescription()" (ngModelChange)="boardDescription.set($event)"></textarea>
-      <p-select
-        [options]="parentBoardOptions()"
-        optionLabel="label"
-        optionValue="value"
-        [ngModel]="parentBoardId()"
-        (ngModelChange)="parentBoardId.set($event)"
-        placeholder="Tablero padre"
-        class="w-full"
-      />
     </div>
     <ng-template #footer>
       <p-button label="Cancelar" severity="secondary" text (onClick)="createDialogOpen.set(false)" />

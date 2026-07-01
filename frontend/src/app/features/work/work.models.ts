@@ -65,6 +65,7 @@ export interface WorkAttachment {
 export interface WorkCard {
   id: string;
   boardId: string;
+  boardListId?: string | null;
   issueNumber: number;
   type: WorkIssueType;
   columnId: WorkColumnId;
@@ -82,6 +83,8 @@ export interface WorkCard {
   order: number;
   createdAt: string;
   updatedAt: string;
+  assignedAt?: string | null;
+  completedAt?: string | null;
   requesterName?: string;
   requesterPhone?: string;
   requesterEmail?: string;
@@ -99,7 +102,18 @@ export interface WorkBoard {
   accent: string;
   memberIds: string[];
   parentBoardId?: string | null;
+  type: 'standard' | 'general';
   createdAt: string;
+}
+
+export interface WorkBoardList {
+  id: string;
+  boardId: string;
+  name: string;
+  sortOrder: number;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface WorkState {
@@ -176,6 +190,7 @@ export function createDefaultWorkState(): WorkState {
       key: 'ARG',
       accent: 'bg-teal-500',
       memberIds: ['m1', 'm2', 'm4'],
+      type: 'standard',
       createdAt: '2026-05-01T10:00:00.000Z',
     },
     {
@@ -185,6 +200,7 @@ export function createDefaultWorkState(): WorkState {
       key: 'SPR',
       accent: 'bg-primary-500',
       memberIds: ['m1', 'm2', 'm3'],
+      type: 'standard',
       createdAt: '2026-05-08T10:00:00.000Z',
     },
   ];
