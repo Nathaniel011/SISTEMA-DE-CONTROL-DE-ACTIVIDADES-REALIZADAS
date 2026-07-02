@@ -1,17 +1,24 @@
 @if (board(); as b) {
   <div class="yt-content yt-content-standalone work-board-view flex flex-col gap-4">
     <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-      <div class="flex items-center gap-3">
+      <div class="flex items-center gap-3 min-w-0">
         <p-button icon="pi pi-arrow-left" text routerLink="/work/agile" />
-        <div class="work-board-key" [class]="b.accent">{{ b.key }}</div>
-        <div>
-          <h2 class="text-xl font-semibold m-0">{{ b.name }}</h2>
-          <p class="text-sm text-surface-500 m-0 mt-1">{{ b.description }}</p>
-        </div>
+        <button type="button" class="flex items-center gap-3 min-w-0 text-left" (click)="openBoardSwitcher()">
+          <div class="work-board-key" [class]="b.type === 'general' ? 'work-board-key-general' : b.accent">{{ b.key }}</div>
+          <div class="min-w-0">
+            <div class="flex items-center gap-2">
+              <h2 class="text-xl font-semibold m-0 truncate">{{ boardDisplayName(b) }}</h2>
+              <i class="pi pi-chevron-down text-surface-500 text-sm"></i>
+            </div>
+            @if (b.type !== 'general' && b.description) {
+              <p class="text-sm text-surface-500 m-0 mt-1 truncate">{{ b.description }}</p>
+            }
+          </div>
+        </button>
       </div>
       <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
-          <p-button label="Crear tarjeta" icon="pi pi-plus" class="mr-2" (onClick)="openCreateModal()" />
-          <p-iconfield class="w-full sm:w-64">
+        <p-button label="Crear tarjeta" icon="pi pi-plus" class="mr-2" (onClick)="openCreateCard()" />
+        <p-iconfield class="w-full sm:w-64">
           <p-inputicon class="pi pi-search" />
           <input
             pInputText
@@ -35,67 +42,78 @@
 
     <div class="work-kanban-scroll">
       <div class="work-kanban">
-        @for (column of columns; track column.id) {
+        @for (list of lists(); track list.id) {
           <div
             class="work-kanban-column"
-            draggable="false"
-            (dragover)="allowDrop($event)"
-            (drop)="onDrop($event, column.id)"
+            pDroppable
+            (onDrop)="onDrop(list.id)"
           >
             <div class="work-kanban-column-header">
-              <div class="flex items-center gap-2">
-                <i [class]="column.icon + ' text-primary-500'"></i>
-                <span class="font-semibold">{{ column.title }}</span>
-                <span class="work-kanban-count">{{ cardsForColumn(column.id).length }}</span>
-              </div>
-              <p-button
-                icon="pi pi-plus"
-                text
-                rounded
-                size="small"
-                (onClick)="startQuickAdd(column.id)"
-              />
+              @if (editingListId() === list.id) {
+                <div class="flex flex-col gap-2 w-full">
+                  <input
+                    pInputText
+                    class="w-full"
+                    [ngModel]="editingListName()"
+                    (ngModelChange)="editingListName.set($event)"
+                    (keyup.enter)="saveRenameList(list.id)"
+                  />
+                  <div class="flex gap-2">
+                    <p-button label="Guardar" size="small" (onClick)="saveRenameList(list.id)" />
+                    <p-button label="Cancelar" size="small" severity="secondary" text (onClick)="cancelRenameList()" />
+                  </div>
+                </div>
+              } @else {
+                <div class="flex items-center gap-2 flex-1">
+                  <i class="pi pi-list text-primary-500"></i>
+                  <span class="font-semibold">{{ list.name }}</span>
+                  <span class="work-kanban-count">{{ cardsForList(list).length }}</span>
+                </div>
+                @if (workService.canManageBoardLists()) {
+                  <p-button
+                    icon="pi pi-pencil"
+                    text
+                    rounded
+                    size="small"
+                    (onClick)="startRenameList(list)"
+                  />
+                }
+                <p-button
+                  icon="pi pi-plus"
+                  text
+                  rounded
+                  size="small"
+                  (onClick)="openCreateCard(list.id)"
+                />
+              }
             </div>
 
-            @if (quickAddColumn() === column.id) {
-              <div class="work-kanban-quick-add">
-                <input
-                  pInputText
-                  class="w-full"
-                  placeholder="Título de la tarjeta"
-                  [ngModel]="quickAddTitle()"
-                  (ngModelChange)="quickAddTitle.set($event)"
-                  (keyup.enter)="saveQuickAdd(column.id)"
-                />
-                <div class="flex gap-2 mt-2">
-                  <p-button label="Añadir" size="small" (onClick)="saveQuickAdd(column.id)" />
-                  <p-button label="Cancelar" size="small" severity="secondary" text (onClick)="cancelQuickAdd()" />
-                </div>
-              </div>
-            }
-
             <div class="work-kanban-cards">
-              @for (card of cardsForColumn(column.id); track card.id) {
+              @for (card of cardsForList(list); track card.id) {
                 @let assignee = workService.getMember(card.assigneeId);
                 @let priority = priorityMeta(card.priority);
                 <article
                   class="work-kanban-card"
-                  draggable="true"
-                  (dragstart)="onDragStart($event, card)"
+                  pDraggable
+                  (onDragStart)="onDragStart(card)"
+                  (onDragEnd)="draggedCardId.set(null)"
                   (click)="openCard(card)"
                 >
-                  <div class="flex flex-wrap gap-1 mb-2">
-                    @for (labelId of card.labelIds; track labelId) {
-                      @if (workService.getLabel(labelId); as label) {
-                        <span class="work-kanban-label" [style.background-color]="label.color">{{ label.name }}</span>
-                      }
-                    }
-                  </div>
                   <h4 class="work-kanban-card-title">{{ card.title }}</h4>
                   <div class="work-kanban-card-meta">
                     <span [class]="priority.tone">
                       <i [class]="priority.icon"></i>
                     </span>
+                    @if (card.assignedAt) {
+                      <span class="text-xs text-surface-500" title="Asignada">
+                        <i class="pi pi-user-plus"></i>
+                      </span>
+                    }
+                    @if (card.completedAt) {
+                      <span class="text-xs text-emerald-600" title="Finalizada">
+                        <i class="pi pi-check"></i>
+                      </span>
+                    }
                     @if (card.dueDate) {
                       <span
                         class="work-kanban-due"
@@ -107,7 +125,7 @@
                       </span>
                     }
                     @if (card.trackedMinutes > 0) {
-                      <span 
+                      <span
                         class="text-xs px-1.5 py-0.5 rounded border"
                         [class]="getTimeOverrunColor(getTimeOverrunStatus(card))"
                       >
@@ -127,6 +145,35 @@
             </div>
           </div>
         }
+
+        @if (workService.canManageBoardLists()) {
+          <div class="work-kanban-column work-kanban-column-add">
+            @if (addingList()) {
+              <div class="flex flex-col gap-2 p-3">
+                <input
+                  pInputText
+                  class="w-full"
+                  placeholder="Nombre de la lista"
+                  [ngModel]="newListName()"
+                  (ngModelChange)="newListName.set($event)"
+                  (keyup.enter)="saveNewList()"
+                />
+                <div class="flex gap-2">
+                  <p-button label="Crear lista" size="small" (onClick)="saveNewList()" />
+                  <p-button label="Cancelar" size="small" severity="secondary" text (onClick)="cancelAddList()" />
+                </div>
+              </div>
+            } @else {
+              <p-button
+                label="Añadir lista"
+                icon="pi pi-plus"
+                text
+                class="w-full"
+                (onClick)="startAddList()"
+              />
+            }
+          </div>
+        }
       </div>
     </div>
   </div>
@@ -139,12 +186,8 @@
 
 <app-work-card-drawer
   [visible]="drawerOpen()"
-  (visibleChange)="drawerOpen.set($event)"
+  (visibleChange)="onDrawerVisibleChange($event)"
   [cardId]="selectedCardId()"
-  />
+/>
 
-  <app-card-modal
-    [visible]="modalOpen()"
-    (visibleChange)="modalOpen.set($event)"
-    [cardId]="modalCardId()"
-  ></app-card-modal>
+<app-work-board-switcher />

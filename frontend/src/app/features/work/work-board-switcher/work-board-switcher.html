@@ -1,0 +1,89 @@
+<p-dialog
+  [visible]="visible()"
+  (visibleChange)="visible.set($event)"
+  [modal]="true"
+  [draggable]="false"
+  [resizable]="false"
+  [style]="{ width: 'min(100%, 42rem)' }"
+  [contentStyle]="{ padding: '0' }"
+  header="Buscar tus tableros"
+>
+  <div class="work-board-switcher">
+    <div class="work-board-switcher-search px-4 pt-2 pb-3">
+      <p-iconfield class="w-full">
+        <p-inputicon class="pi pi-search" />
+        <input
+          pInputText
+          class="w-full"
+          placeholder="Buscar por nombre o clave…"
+          [ngModel]="search()"
+          (ngModelChange)="search.set($event)"
+        />
+      </p-iconfield>
+    </div>
+
+    <div class="work-board-switcher-tabs px-4 pb-3 flex gap-2">
+      <button
+        type="button"
+        class="work-board-switcher-tab"
+        [class.work-board-switcher-tab-active]="activeTab() === 'all'"
+        (click)="setTab('all')"
+      >
+        Todo
+      </button>
+      <button
+        type="button"
+        class="work-board-switcher-tab"
+        [class.work-board-switcher-tab-active]="activeTab() === 'recent'"
+        (click)="setTab('recent')"
+      >
+        Recientes
+      </button>
+    </div>
+
+    <div class="work-board-switcher-section px-4 pb-2 text-sm font-semibold text-surface-500">
+      @if (activeTab() === 'recent') {
+        Reciente
+      } @else {
+        Tableros del espacio de trabajo
+      }
+    </div>
+
+    <div class="work-board-switcher-grid px-4 pb-4">
+      @for (board of filteredBoards(); track board.id; let i = $index) {
+        <button
+          type="button"
+          class="work-board-switcher-item"
+          [class.work-board-switcher-item-general]="board.type === 'general'"
+          (click)="openBoard(board)"
+        >
+          <div class="work-board-switcher-thumb" [class]="boardThumbnailClass(board, i)">
+            <span class="work-board-switcher-thumb-key">{{ board.key }}</span>
+          </div>
+          <div class="work-board-switcher-meta">
+            <span class="work-board-switcher-name">{{ boardDisplayName(board) }}</span>
+            @if (isCurrent(board)) {
+              <i class="pi pi-check text-primary text-xs"></i>
+            }
+          </div>
+        </button>
+      } @empty {
+        <div class="col-span-full text-center text-surface-500 py-8 text-sm">
+          No se encontraron tableros.
+        </div>
+      }
+    </div>
+
+    @if (workService.generalBoard(); as general) {
+      <div class="work-board-switcher-footer px-4 py-3 border-t border-surface-200">
+        <p-button
+          label="Abrir Tablero general"
+          icon="pi pi-inbox"
+          text
+          class="w-full justify-start"
+          (onClick)="openBoard(general)"
+        />
+      </div>
+    }
+  </div>
+</p-dialog>

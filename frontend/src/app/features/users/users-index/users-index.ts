@@ -1,4 +1,5 @@
-import {ChangeDetectionStrategy, Component, inject} from '@angular/core';
+import {ChangeDetectionStrategy, Component, inject, OnInit} from '@angular/core';
+import {DatePipe} from '@angular/common';
 import {RouterLink} from '@angular/router';
 import {FormsModule} from '@angular/forms';
 import {Button} from 'primeng/button';
@@ -10,7 +11,8 @@ import {Paginator} from 'primeng/paginator';
 import {Tag} from 'primeng/tag';
 import {TableModule} from 'primeng/table';
 import {ToggleSwitch} from 'primeng/toggleswitch';
-import {UsersStore} from '../../../stores/users/users.store';
+import {UsersService} from '../../../core/services/users.service';
+import {PermissionsService} from '../../../core/services/permissions.service';
 import {UsersSortField} from '../users.models';
 
 @Component({
@@ -28,33 +30,43 @@ import {UsersSortField} from '../users.models';
     Tag,
     TableModule,
     ToggleSwitch,
+    DatePipe,
   ],
   templateUrl: './users-index.html',
 })
-export class UsersIndex {
-  protected readonly store = inject(UsersStore);
+export class UsersIndex implements OnInit {
+  protected readonly usersService = inject(UsersService);
+  protected readonly permissions = inject(PermissionsService);
+
+  ngOnInit(): void {
+    void this.usersService.loadUsers();
+  }
 
   onSearch(value: string): void {
-    this.store.setSearchTerm(value);
+    this.usersService.setSearchTerm(value);
   }
 
   onSort(field: UsersSortField): void {
-    this.store.toggleSort(field);
+    this.usersService.toggleSort(field);
   }
 
   onPageChange(event: {page?: number; rows?: number}): void {
-    this.store.setPage(event.page ?? 0, event.rows ?? this.store.rows());
+    this.usersService.setPage(event.page ?? 0, event.rows ?? this.usersService.rows());
   }
 
-  toggleStatus(id: number, active: boolean): void {
-    this.store.toggleUserStatus(id, active);
+  toggleStatus(id: string, active: boolean): void {
+    void this.usersService.toggleUserStatus(id, active);
+  }
+
+  roleLabel(role: string): string {
+    return this.permissions.roleLabel(role);
   }
 
   sortIcon(field: UsersSortField): string {
-    if (this.store.sortField() !== field) {
+    if (this.usersService.sortField() !== field) {
       return 'pi pi-sort-alt text-surface-400';
     }
-    return this.store.sortDirection() === 'asc'
+    return this.usersService.sortDirection() === 'asc'
       ? 'pi pi-sort-amount-up-alt text-primary'
       : 'pi pi-sort-amount-down text-primary';
   }

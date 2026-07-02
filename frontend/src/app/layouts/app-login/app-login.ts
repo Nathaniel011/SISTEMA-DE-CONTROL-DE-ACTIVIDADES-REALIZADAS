@@ -24,7 +24,7 @@ import {AuthService} from '../../core/services/auth.service';
 export class AppLogin {
   authService = inject(AuthService);
 
-  username = signal('pcondori');
+  username = signal('administrador');
   password = signal('');
   loading = signal(false);
   error = signal<string | null>(null);
@@ -33,8 +33,9 @@ export class AppLogin {
     this.error.set(null);
     this.loading.set(true);
     try {
+      const identifier = this.username().trim();
       await this.authService.login({
-        username: this.username().trim(),
+        username: identifier.includes('@') ? identifier.toLowerCase() : identifier,
         password: this.password(),
       });
     } catch {

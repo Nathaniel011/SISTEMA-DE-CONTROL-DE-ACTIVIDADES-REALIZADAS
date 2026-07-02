@@ -1,12 +1,13 @@
 export interface UserRecord {
-  id: number;
+  id: string;
   fullName: string;
   username: string;
   email: string;
   roles: string[];
   active: boolean;
   createdAt: string;
-  lastAccess: string;
+  lastAccess?: string;
+  temporaryPassword?: string;
 }
 
 export interface UserFormPayload {
@@ -24,14 +25,12 @@ export interface UsersSortOption {
   value: `${UsersSortField}:${SortDirection}`;
 }
 
+export const MAX_USER_ROLES = 1;
+
 export const USER_ROLE_OPTIONS = [
   {label: 'Administrador', value: 'ADMIN'},
-  {label: 'Jefe', value: 'CHIEF'},
+  {label: 'Jefa', value: 'CHIEF'},
   {label: 'Secretaria', value: 'SECRETARY'},
-  {label: 'Mantenimiento', value: 'MAINTENANCE'},
-  {label: 'Programador', value: 'PROGRAMMER'},
-  {label: 'Redes', value: 'NETWORK'},
-  {label: 'Electricidad', value: 'ELECTRICITY'},
 ];
 
 export const USERS_SORT_OPTIONS: UsersSortOption[] = [

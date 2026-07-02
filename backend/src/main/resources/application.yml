@@ -16,6 +16,10 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 12MB
 
 server:
   port: ${SERVER_PORT:8080}
@@ -25,6 +29,11 @@ server:
 scar:
   db:
     auto-provision: true
+  upload:
+    dir: ${UPLOAD_DIR:./uploads}
+  webhooks:
+    email:
+      secret: ${WEBHOOK_EMAIL_SECRET:}
   jwt:
     secret: ${JWT_SECRET:scar-dev-secret-change-in-production-min-256-bits-long-key!!}
     expiration-ms: ${JWT_EXPIRATION_MS:86400000}

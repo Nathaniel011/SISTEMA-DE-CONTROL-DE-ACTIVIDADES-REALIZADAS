@@ -30,6 +30,10 @@ public class Project {
     @Column(nullable = false)
     private ProjectType type = ProjectType.STANDARD;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "parent_project_id")
+    private Project parentProject;
+
     @ManyToMany
     @JoinTable(
         name = "project_members",
@@ -52,6 +56,8 @@ public class Project {
     public void setAccent(String accent) { this.accent = accent; }
     public ProjectType getType() { return type; }
     public void setType(ProjectType type) { this.type = type; }
+    public Project getParentProject() { return parentProject; }
+    public void setParentProject(Project parentProject) { this.parentProject = parentProject; }
     public Set<User> getMembers() { return members; }
     public Instant getCreatedAt() { return createdAt; }
 }

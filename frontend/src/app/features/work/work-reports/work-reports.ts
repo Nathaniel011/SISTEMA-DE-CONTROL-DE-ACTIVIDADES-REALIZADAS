@@ -18,7 +18,7 @@ export class WorkReports implements OnInit {
   workService = inject(WorkService);
   workApi = inject(WorkApiService);
 
-  selectedProjectId = signal<string | null>(null);
+  selectedBoardId = signal<string | null>(null);
   startDate = signal<string | null>(null);
   endDate = signal<string | null>(null);
   loading = signal(false);
@@ -26,8 +26,8 @@ export class WorkReports implements OnInit {
   summary = signal({ totalIssues: 0, completed: 0, criticalOpen: 0, totalHours: 0 });
   timePerMember = signal<{ memberId: string; memberName: string; totalHours: number }[]>([]);
 
-  projectOptions = computed(() => [
-    { label: 'Todos los proyectos', value: null },
+  boardOptions = computed(() => [
+    { label: 'Todos los tableros', value: null },
     ...this.workService.boards().map(b => ({ label: b.name, value: b.id }))
   ]);
 
@@ -61,7 +61,7 @@ export class WorkReports implements OnInit {
     this.loading.set(true);
     try {
       const data = await firstValueFrom(
-        this.workApi.getReports(this.selectedProjectId() ?? undefined, this.startDate() ?? undefined, this.endDate() ?? undefined)
+        this.workApi.getReports(this.selectedBoardId() ?? undefined, this.startDate() ?? undefined, this.endDate() ?? undefined)
       );
       this.summary.set(data.summary);
       this.timePerMember.set(data.timePerMember);

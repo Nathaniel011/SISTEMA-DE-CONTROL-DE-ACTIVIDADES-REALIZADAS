@@ -28,32 +28,51 @@ public class WhiteboardService {
     private final WhiteboardRepository whiteboardRepository;
     private final ProjectRepository projectRepository;
     private final UserRepository userRepository;
+    private final PermissionService permissionService;
     private final Map<UUID, CopyOnWriteArrayList<SseEmitter>> emitters = new ConcurrentHashMap<>();
 
     public WhiteboardService(
         WhiteboardRepository whiteboardRepository,
         ProjectRepository projectRepository,
-        UserRepository userRepository
+        UserRepository userRepository,
+        PermissionService permissionService
     ) {
         this.whiteboardRepository = whiteboardRepository;
         this.projectRepository = projectRepository;
         this.userRepository = userRepository;
+        this.permissionService = permissionService;
     }
 
     @Transactional(readOnly = true)
     public List<WhiteboardDto> list(ScarPrincipal principal, UUID projectId) {
-        return whiteboardRepository.findForProject(projectId).stream().map(this::toDto).toList();
+        User currentUser = loadCurrentUser(principal);
+        if (projectId != null) {
+            Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Proyecto no encontrado"));
+            permissionService.requireAccessProject(currentUser, project);
+        }
+        return whiteboardRepository.findForProject(projectId).stream()
+            .filter(board -> canAccessBoard(currentUser, board))
+            .map(this::toDto)
+            .toList();
     }
 
     @Transactional(readOnly = true)
     public WhiteboardDto get(ScarPrincipal principal, UUID id) {
-        return toDto(loadWhiteboard(id));
+        Whiteboard board = loadWhiteboard(id);
+        requireBoardAccess(principal, board);
+        return toDto(board);
     }
 
     @Transactional
     public WhiteboardDto create(ScarPrincipal principal, WhiteboardRequest request) {
+        User currentUser = loadCurrentUser(principal);
+        Project project = loadProject(request.projectId());
+        if (project != null) {
+            permissionService.requireAccessProject(currentUser, project);
+        }
         Whiteboard board = new Whiteboard();
-        board.setProject(loadProject(request.projectId()));
+        board.setProject(project);
         board.setName(requiredName(request.name()));
         board.setDescription(request.description() == null ? "" : request.description());
         board.setContentJson(validContent(request.contentJson()));
@@ -64,8 +83,14 @@ public class WhiteboardService {
     @Transactional
     public WhiteboardDto update(ScarPrincipal principal, UUID id, WhiteboardRequest request) {
         Whiteboard board = loadWhiteboard(id);
+        requireBoardAccess(principal, board);
+        User currentUser = loadCurrentUser(principal);
         if (request.projectId() != null) {
-            board.setProject(loadProject(request.projectId()));
+            Project project = loadProject(request.projectId());
+            if (project != null) {
+                permissionService.requireAccessProject(currentUser, project);
+            }
+            board.setProject(project);
         }
         if (request.name() != null) {
             board.setName(requiredName(request.name()));
@@ -84,13 +109,17 @@ public class WhiteboardService {
 
     @Transactional
     public void delete(ScarPrincipal principal, UUID id) {
-        whiteboardRepository.delete(loadWhiteboard(id));
+        Whiteboard board = loadWhiteboard(id);
+        requireBoardAccess(principal, board);
+        whiteboardRepository.delete(board);
         broadcastDeleted(id);
     }
 
     @Transactional(readOnly = true)
     public SseEmitter subscribe(ScarPrincipal principal, UUID id) {
-        WhiteboardDto current = toDto(loadWhiteboard(id));
+        Whiteboard board = loadWhiteboard(id);
+        requireBoardAccess(principal, board);
+        WhiteboardDto current = toDto(board);
         SseEmitter emitter = new SseEmitter(0L);
         emitters.computeIfAbsent(id, key -> new CopyOnWriteArrayList<>()).add(emitter);
         emitter.onCompletion(() -> removeEmitter(id, emitter));
@@ -108,6 +137,21 @@ public class WhiteboardService {
     private User loadUser(UUID id) {
         return userRepository.findById(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+    }
+
+    private User loadCurrentUser(ScarPrincipal principal) {
+        return userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+    }
+
+    private void requireBoardAccess(ScarPrincipal principal, Whiteboard board) {
+        if (board.getProject() != null) {
+            permissionService.requireAccessProject(loadCurrentUser(principal), board.getProject());
+        }
+    }
+
+    private boolean canAccessBoard(User user, Whiteboard board) {
+        return board.getProject() == null || permissionService.canAccessProject(user, board.getProject());
     }
 
     private Project loadProject(String projectId) {

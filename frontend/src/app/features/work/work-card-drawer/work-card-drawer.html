@@ -1,259 +1,401 @@
-<p-drawer
+<p-dialog
   [visible]="visible()"
-  (visibleChange)="visible.set($event)"
-  position="right"
-  [style]="{ width: 'min(100%, 32rem)' }"
-  header="Detalle de tarjeta"
+  (visibleChange)="$event ? visible.set(true) : close()"
+  [modal]="true"
+  [dismissableMask]="true"
+  [draggable]="false"
+  [resizable]="false"
+  [showHeader]="false"
+  [style]="{ width: 'min(96vw, 72rem)', maxHeight: '92vh' }"
+  contentStyleClass="work-card-modal-content p-0"
+  styleClass="work-card-modal"
 >
   @if (card(); as c) {
-    <div class="flex flex-col gap-5 pb-6">
-      <div class="flex flex-col gap-2">
-        <input
-          pInputText
-          class="w-full text-lg font-semibold"
-          [ngModel]="titleDraft()"
-          (ngModelChange)="titleDraft.set($event)"
-          (blur)="saveTitle()"
-        />
-        <div class="flex flex-wrap gap-2 items-center text-sm text-surface-500">
-          <span class="font-mono text-primary-600">{{ workService.getIssueKey(c) }}</span>
-          <span>·</span>
-          <span>Actualizado {{ formatDate(c.updatedAt) }}</span>
+    <div class="work-card-modal-shell">
+      <header class="work-card-modal-header">
+        <div class="flex items-center gap-2 min-w-0 flex-1">
+          @if (isDraftCard()) {
+            <p-tag value="Nueva" severity="info" />
+          }
+          <p-tag [value]="listName()" severity="secondary" />
+          @if (!isDraftCard()) {
+            <span class="text-sm text-surface-500 font-mono truncate">{{ workService.getIssueKey(c) }}</span>
+          }
+          @if (board(); as b) {
+            <span class="text-sm text-surface-400 truncate hidden sm:inline">· {{ boardDisplayName(b) }}</span>
+          }
+          @if (!isDraftCard() && hasUnsavedChanges()) {
+            <span class="text-xs text-amber-600 font-medium hidden sm:inline">· Sin guardar</span>
+          }
         </div>
-      </div>
+        <div class="flex items-center gap-1 shrink-0">
+          <p-button
+            [label]="canSave() ? saveButtonLabel() : ''"
+            icon="pi pi-check"
+            size="small"
+            severity="success"
+            [rounded]="!canSave()"
+            [text]="!canSave()"
+            [outlined]="canSave()"
+            [aria-label]="isDraftCard() ? 'Crear tarjeta' : 'Guardar cambios'"
+            (onClick)="saveAll()"
+            [loading]="saving()"
+            [disabled]="!canSave() || saving()"
+          />
+          @if (canDelete()) {
+            <p-button
+              icon="pi pi-trash"
+              text
+              rounded
+              severity="danger"
+              aria-label="Eliminar tarjeta"
+              (onClick)="openDeleteDialog()"
+            />
+          }
+          <p-button icon="pi pi-times" text rounded severity="secondary" (onClick)="close()" />
+        </div>
+      </header>
 
-      <p-tabs [value]="activeTab()" (valueChange)="onTabChange($event)">
-        <p-tablist>
-          <p-tab value="0">Detalles</p-tab>
-          <p-tab value="1">Comentarios ({{ c.comments.length }})</p-tab>
-          <p-tab value="2">Adjuntos ({{ c.attachments.length }})</p-tab>
-          <p-tab value="3">Tiempo</p-tab>
-        </p-tablist>
-        <p-tabpanels>
-          <p-tabpanel value="0">
-            <div class="flex flex-col gap-4 pt-2">
-              <div class="flex flex-col gap-2">
-                <label class="font-medium text-sm">Descripción</label>
-                <textarea
-                  pTextarea
-                  rows="4"
-                  class="w-full"
-                  [ngModel]="descriptionDraft()"
-                  (ngModelChange)="descriptionDraft.set($event)"
-                  (blur)="saveDescription()"
-                  placeholder="Criterios de aceptación, notas…"
-                ></textarea>
-              </div>
+      @if (saveError(); as saveErr) {
+        <p class="text-sm text-red-600 m-0 px-5 py-2 border-b border-surface-200 bg-red-50">{{ saveErr }}</p>
+      }
 
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div class="flex flex-col gap-2">
-                  <label class="font-medium text-sm">Prioridad</label>
-                  <p-select
-                    [options]="priorityOptions"
-                    optionLabel="label"
-                    optionValue="value"
-                    [ngModel]="c.priority"
-                    (ngModelChange)="updateField({ priority: $event })"
-                    class="w-full"
-                  />
-                </div>
-                <div class="flex flex-col gap-2">
-                  <label class="font-medium text-sm">Responsable</label>
-                  <p-select
-                    [options]="memberOptions()"
-                    optionLabel="label"
-                    optionValue="value"
-                    [ngModel]="c.assigneeId"
-                    (ngModelChange)="updateField({ assigneeId: $event })"
-                    [showClear]="true"
-                    placeholder="Sin asignar"
-                    class="w-full"
-                  />
-                </div>
-                <div class="flex flex-col gap-2">
-                  <label class="font-medium text-sm">Fecha límite</label>
-                  <p-datepicker
-                    [ngModel]="dueDateValue()"
-                    (ngModelChange)="onDueDateChange($event)"
-                    [showIcon]="true"
-                    appendTo="body"
-                    dateFormat="dd/mm/yy"
-                    styleClass="w-full"
-                  />
-                </div>
-                <div class="flex flex-col gap-2">
-                  <label class="font-medium text-sm">Estimación (min)</label>
-                  <p-inputnumber
-                    [ngModel]="c.estimateMinutes"
-                    (ngModelChange)="updateField({ estimateMinutes: $event })"
-                    [min]="0"
-                    [step]="30"
-                    styleClass="w-full"
-                  />
-                </div>
-              </div>
+      <div class="work-card-modal-body">
+        <section class="work-card-modal-main">
+          <textarea
+            pTextarea
+            rows="2"
+            class="work-card-modal-title w-full"
+            [ngModel]="titleDraft()"
+            (ngModelChange)="titleDraft.set($event)"
+            placeholder="Título de la tarjeta"
+          ></textarea>
 
-              <div class="flex flex-col gap-2">
-                <label class="font-medium text-sm">Etiquetas</label>
-                <div class="flex flex-wrap gap-2">
-                  @for (label of workService.labels(); track label.id) {
-                    <button
-                      type="button"
-                      class="work-label-chip"
-                      [class.work-label-chip-active]="c.labelIds.includes(label.id)"
-                      [style.--label-color]="label.color"
-                      (click)="toggleLabel(label.id)"
-                    >
-                      {{ label.name }}
-                    </button>
-                  }
-                </div>
-              </div>
-
-              <div class="rounded-xl border border-surface-200 bg-surface-50 p-4 flex items-center justify-between">
-                <div>
-                  <div class="text-sm text-surface-500">Tiempo registrado</div>
-                  <div class="text-xl font-bold text-primary-600">{{ formatMinutes(c.trackedMinutes) }}</div>
-                  @if (c.estimateMinutes) {
-                    <div class="text-xs text-surface-500 mt-1">de {{ formatMinutes(c.estimateMinutes) }} estimados</div>
-                  }
-                </div>
-                <i class="pi pi-clock text-2xl text-primary-400"></i>
-              </div>
-            </div>
-          </p-tabpanel>
-
-          <p-tabpanel value="1">
-            <div class="flex flex-col gap-4 pt-2">
-              <div class="flex flex-col gap-2">
-                <textarea
-                  pTextarea
-                  rows="2"
-                  class="w-full"
-                  [ngModel]="commentText()"
-                  (ngModelChange)="commentText.set($event)"
-                  placeholder="Escribe un comentario…"
-                ></textarea>
-                <p-button label="Comentar" icon="pi pi-send" size="small" (onClick)="addComment()" />
-              </div>
-              <div class="flex flex-col gap-3">
-                @for (comment of c.comments; track comment.id) {
-                  @let author = workService.getMember(comment.authorId);
-                  <div class="rounded-xl border border-surface-200 p-3">
-                    <div class="flex items-center gap-2 mb-2">
-                      <p-avatar [label]="author?.initials ?? '?'" shape="circle" style="background-color: #ccfbf1; color: #134e4a" />
-                      <div>
-                        <div class="font-medium text-sm">{{ author?.name ?? 'Usuario' }}</div>
-                        <div class="text-xs text-surface-500">{{ formatDate(comment.createdAt) }}</div>
-                      </div>
-                    </div>
-                    <p class="text-sm m-0 whitespace-pre-wrap">{{ comment.text }}</p>
-                  </div>
-                } @empty {
-                  <p class="text-sm text-surface-500 m-0">Sin comentarios aún.</p>
-                }
-              </div>
-            </div>
-          </p-tabpanel>
-
-          <p-tabpanel value="2">
-            <div class="flex flex-col gap-4 pt-2">
-              <p-fileupload
-                mode="basic"
-                [auto]="true"
-                [multiple]="true"
-                accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
-                (uploadHandler)="onFileUpload($event)"
-                [disabled]="uploading()"
-                chooseLabel="Subir archivos"
+          <div class="work-card-modal-toolbar">
+            @if (cardId(); as id) {
+              <p-button
+                label="Mover"
+                icon="pi pi-arrows-h"
+                size="small"
+                severity="secondary"
+                [outlined]="true"
+                (onClick)="openMoveDialog()"
               />
-              
-              <div class="grid grid-cols-2 gap-3">
-                @for (attachment of c.attachments; track attachment.id) {
-                  <div class="rounded-lg border border-surface-200 p-3 flex flex-col gap-2">
-                    @if (isImage(attachment.mimeType)) {
-                      <p-image 
-                        [src]="attachment.fileUrl" 
-                        [alt]="attachment.fileName" 
-                        width="100%" 
-                        preview
-                      />
-                    } @else {
-                      <div class="flex items-center justify-center h-24 bg-surface-100 rounded">
-                        <i class="pi pi-file text-3xl text-surface-400"></i>
-                      </div>
-                    }
-                    <div class="text-sm font-medium truncate">{{ attachment.fileName }}</div>
-                    <div class="text-xs text-surface-500">{{ formatFileSize(attachment.fileSize) }}</div>
-                    <p-button 
-                      icon="pi pi-trash" 
-                      size="small" 
-                      severity="danger" 
-                      text 
-                      (onClick)="deleteAttachment(attachment.id)"
-                    />
-                  </div>
-                } @empty {
-                  <p class="text-sm text-surface-500 col-span-2 m-0">No hay archivos adjuntos.</p>
-                }
+              <p-button
+                label="Tiempo"
+                icon="pi pi-clock"
+                size="small"
+                severity="secondary"
+                [outlined]="true"
+                (onClick)="showTimePanel.set(!showTimePanel())"
+              />
+            }
+          </div>
+
+          @if (cardId(); as id) {
+            <app-work-card-attachments [cardId]="id" />
+          }
+
+          <div class="work-card-modal-section">
+            <div class="work-card-modal-section-title">
+              <i class="pi pi-align-left"></i>
+              <span>Descripción</span>
+            </div>
+            <textarea
+              pTextarea
+              rows="6"
+              class="w-full work-card-modal-description"
+              [ngModel]="descriptionDraft()"
+              (ngModelChange)="descriptionDraft.set($event)"
+              placeholder="Añade una descripción más detallada…"
+            ></textarea>
+          </div>
+
+          <div class="work-card-modal-section">
+            <div class="work-card-modal-section-title">
+              <i class="pi pi-sitemap"></i>
+              <span>Subtareas</span>
+            </div>
+            <div class="flex gap-2">
+              <input
+                pInputText
+                class="flex-1"
+                placeholder="Añadir subtarea"
+                [ngModel]="subtaskTitle()"
+                (ngModelChange)="subtaskTitle.set($event)"
+                (keyup.enter)="createSubtask()"
+              />
+              <p-button
+                label="Añadir"
+                icon="pi pi-plus"
+                size="small"
+                (onClick)="createSubtask()"
+              />
+            </div>
+          </div>
+
+          @if (cardId(); as id) {
+            <app-work-card-time-panel [cardId]="id" [expanded]="showTimePanel()" />
+          }
+        </section>
+
+        <aside class="work-card-modal-sidebar">
+          <div class="work-card-sidebar-block">
+            <h4 class="work-card-sidebar-heading">Detalles</h4>
+
+            <div class="work-card-field">
+              <span class="work-card-field-label">Tablero</span>
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="work-card-field-value">{{ board() ? boardDisplayName(board()!) : '—' }}</span>
+                <p-button
+                  label="Mover…"
+                  icon="pi pi-arrows-h"
+                  size="small"
+                  text
+                  (onClick)="openMoveDialog()"
+                />
               </div>
             </div>
-          </p-tabpanel>
 
-          <p-tabpanel value="3">
-            <div class="flex flex-col gap-4 pt-2">
-              <div class="rounded-xl border border-primary-100 bg-primary-50/50 p-4">
-                <div class="text-sm font-medium text-primary-800 mb-3">Cronómetro Hubstaff</div>
-                @if (isTimerRunningHere()) {
-                  <div class="font-mono text-2xl font-bold text-primary-700 mb-3">{{ formatSeconds(elapsedSeconds()) }}</div>
-                  <p-button label="Detener y guardar" icon="pi pi-stop" severity="danger" size="small" (onClick)="stopTimer()" />
-                } @else {
-                  <p-button label="Iniciar cronómetro" icon="pi pi-play" size="small" (onClick)="startTimer()" />
+            <div class="work-card-field">
+              <span class="work-card-field-label">Lista</span>
+              <p-select
+                [options]="listOptions()"
+                optionLabel="label"
+                optionValue="value"
+                [ngModel]="boardListIdDraft()"
+                (ngModelChange)="boardListIdDraft.set($event)"
+                class="w-full"
+                appendTo="body"
+              />
+            </div>
+
+            <div class="work-card-field">
+              <span class="work-card-field-label">Estado</span>
+              <span class="work-card-field-value">{{ statusLabel(c.columnId) }}</span>
+            </div>
+
+            <div class="work-card-field">
+              <span class="work-card-field-label">Prioridad</span>
+              <p-select
+                [options]="priorityOptions"
+                optionLabel="label"
+                optionValue="value"
+                [ngModel]="priorityDraft()"
+                (ngModelChange)="priorityDraft.set($event)"
+                class="w-full"
+                appendTo="body"
+              />
+            </div>
+
+            <div class="work-card-field">
+              <span class="work-card-field-label">Responsable</span>
+              <p-select
+                [options]="memberOptions()"
+                optionLabel="label"
+                optionValue="value"
+                [ngModel]="assigneeIdDraft()"
+                (ngModelChange)="assigneeIdDraft.set($event)"
+                [showClear]="true"
+                [disabled]="!canChangeAssignee()"
+                placeholder="Sin asignar"
+                class="w-full"
+                appendTo="body"
+              />
+            </div>
+
+            <div class="work-card-field">
+              <span class="work-card-field-label">Fecha límite</span>
+              <p-datepicker
+                [ngModel]="dueDateDraft()"
+                (ngModelChange)="dueDateDraft.set($event)"
+                [showIcon]="true"
+                [showClear]="true"
+                appendTo="body"
+                dateFormat="dd/mm/yy"
+                styleClass="w-full"
+              />
+            </div>
+
+            <div class="work-card-field">
+              <span class="work-card-field-label">Estimación</span>
+              <p-inputnumber
+                [ngModel]="estimateMinutesDraft()"
+                (ngModelChange)="estimateMinutesDraft.set($event ?? null)"
+                [min]="0"
+                [step]="30"
+                suffix=" min"
+                styleClass="w-full"
+              />
+            </div>
+
+            <div class="work-card-field">
+              <span class="work-card-field-label">Tiempo</span>
+              <span class="work-card-field-value">
+                {{ formatMinutes(c.trackedMinutes) }}
+                @if (c.estimateMinutes) {
+                  <span class="text-surface-400"> / {{ formatMinutes(c.estimateMinutes) }}</span>
                 }
-              </div>
+              </span>
+              @if (formatTimeRemaining(c.trackedMinutes, c.estimateMinutes); as remaining) {
+                <span class="text-xs text-surface-500">{{ remaining }}</span>
+              }
+              @if (formatTimeOverrun(c.trackedMinutes, c.estimateMinutes); as overrun) {
+                <span class="text-xs text-red-600 font-medium">{{ overrun }}</span>
+              }
+            </div>
+          </div>
 
-              <div class="rounded-xl border border-surface-200 bg-surface-50 p-4">
-                <div class="text-sm font-medium text-surface-700 mb-3">Registro manual</div>
-                <div class="grid grid-cols-2 gap-3">
-                  <div class="flex flex-col gap-2">
-                    <label class="text-sm">Minutos</label>
-                    <p-inputnumber
-                      [ngModel]="timeMinutes()"
-                      (ngModelChange)="timeMinutes.set($event)"
-                      [min]="1"
-                      [step]="15"
+          <div class="work-card-sidebar-block work-card-activity">
+            <div class="flex items-center justify-between gap-2 mb-3">
+              <h4 class="work-card-sidebar-heading m-0">Comentarios y actividad</h4>
+            </div>
+            <textarea
+              pTextarea
+              rows="2"
+              class="w-full mb-2"
+              [ngModel]="commentText()"
+              (ngModelChange)="commentText.set($event)"
+              placeholder="Escribe un comentario…"
+            ></textarea>
+            <p-button label="Comentar" icon="pi pi-send" size="small" class="mb-4" (onClick)="addComment()" />
+
+            <div class="flex flex-col gap-3">
+              @for (comment of comments(); track comment.id) {
+                @let author = workService.getMember(comment.authorId);
+                <div class="work-card-comment">
+                  <div class="flex items-center gap-2 mb-2">
+                    <p-avatar
+                      [label]="author?.initials ?? '?'"
+                      shape="circle"
+                      style="background-color: #ccfbf1; color: #134e4a; width: 1.75rem; height: 1.75rem; font-size: 0.65rem"
                     />
-                  </div>
-                  <div class="flex flex-col gap-2 col-span-2 sm:col-span-1">
-                    <label class="text-sm">Nota</label>
-                    <input pInputText class="w-full" [ngModel]="timeNote()" (ngModelChange)="timeNote.set($event)" placeholder="Qué hiciste" />
-                  </div>
-                </div>
-                <p-button label="Registrar" icon="pi pi-plus" class="mt-3" size="small" (onClick)="logTime()" />
-              </div>
-
-              <div class="flex flex-col gap-2">
-                @for (entry of c.timeEntries; track entry.id) {
-                  @let member = workService.getMember(entry.memberId);
-                  <div class="flex items-center justify-between rounded-lg border border-surface-200 px-3 py-2 text-sm">
                     <div>
-                      <div class="font-medium">{{ formatMinutes(entry.minutes) }} · {{ member?.name }}</div>
-                      <div class="text-surface-500 text-xs">{{ entry.note || 'Sin nota' }}</div>
+                      <div class="font-medium text-sm">{{ author?.name ?? 'Usuario' }}</div>
+                      <div class="text-xs text-surface-500">{{ formatDate(comment.createdAt) }}</div>
                     </div>
-                    <span class="text-xs text-surface-400">{{ formatDate(entry.loggedAt) }}</span>
                   </div>
-                } @empty {
-                  <p class="text-sm text-surface-500 m-0">No hay registros de tiempo.</p>
-                }
-              </div>
+                  <p class="text-sm m-0 whitespace-pre-wrap">{{ comment.text }}</p>
+                </div>
+              } @empty {
+                <p class="text-sm text-surface-500 m-0">Sin comentarios todavía.</p>
+              }
             </div>
-          </p-tabpanel>
-        </p-tabpanels>
-      </p-tabs>
 
-      <div class="border-t border-surface-200 pt-4">
-        <p-button label="Eliminar tarjeta" icon="pi pi-trash" severity="danger" text (onClick)="deleteCard()" />
+            <div class="text-xs text-surface-400 mt-4 pt-3 border-t border-surface-200">
+              <div>Asignada: {{ c.assignedAt ? formatDate(c.assignedAt) : '—' }}</div>
+              <div>Actualizada: {{ formatDate(c.updatedAt) }}</div>
+              <div>Finalizada: {{ c.completedAt ? formatDate(c.completedAt) : 'En curso' }}</div>
+            </div>
+          </div>
+        </aside>
       </div>
     </div>
   }
-</p-drawer>
+</p-dialog>
+
+<p-dialog
+  header="Mover tarjeta"
+  [modal]="true"
+  [draggable]="false"
+  [resizable]="false"
+  [style]="{ width: 'min(96vw, 24rem)' }"
+  [visible]="moveDialogOpen()"
+  (visibleChange)="!$event && closeMoveDialog()"
+  appendTo="body"
+  [baseZIndex]="11000"
+>
+  <div class="flex flex-col gap-4 pt-1">
+    <div class="work-card-field m-0">
+      <span class="work-card-field-label">Tablero</span>
+      <p-select
+        [options]="moveBoardOptions()"
+        optionLabel="label"
+        optionValue="value"
+        [ngModel]="moveBoardId()"
+        (ngModelChange)="onMoveBoardChange($event)"
+        class="w-full"
+        appendTo="body"
+      />
+    </div>
+
+    <div class="work-card-field m-0">
+      <span class="work-card-field-label">Lista</span>
+      <p-select
+        [options]="moveListOptions()"
+        optionLabel="label"
+        optionValue="value"
+        [ngModel]="moveListId()"
+        (ngModelChange)="moveListId.set($event)"
+        [disabled]="!moveListOptions().length"
+        placeholder="Selecciona una lista"
+        class="w-full"
+        appendTo="body"
+      />
+    </div>
+
+    <div class="work-card-field m-0">
+      <span class="work-card-field-label">Responsable</span>
+      <p-select
+        [options]="moveMemberOptions()"
+        optionLabel="label"
+        optionValue="value"
+        [ngModel]="moveAssigneeId()"
+        (ngModelChange)="moveAssigneeId.set($event)"
+        [showClear]="true"
+        [disabled]="!canChangeMoveAssignee()"
+        placeholder="Sin asignar"
+        class="w-full"
+        appendTo="body"
+      />
+    </div>
+
+    @if (transferError(); as transferErr) {
+      <p class="text-sm text-red-600 m-0">{{ transferErr }}</p>
+    }
+  </div>
+
+  <ng-template #footer>
+    <p-button label="Cancelar" severity="secondary" text (onClick)="closeMoveDialog()" [disabled]="transferring()" />
+    <p-button
+      label="Mover"
+      icon="pi pi-check"
+      (onClick)="confirmMove()"
+      [loading]="transferring()"
+      [disabled]="!moveBoardId() || !moveListId()"
+    />
+  </ng-template>
+</p-dialog>
+
+<p-dialog
+  header="Confirmar eliminación"
+  [modal]="true"
+  [closable]="false"
+  [draggable]="false"
+  [resizable]="false"
+  [style]="{ width: '28rem' }"
+  [visible]="deleteDialogOpen()"
+  (visibleChange)="deleteDialogOpen.set($event)"
+  appendTo="body"
+  [baseZIndex]="12000"
+  styleClass="work-card-delete-dialog"
+>
+  @if (card(); as c) {
+    <p class="m-0 text-surface-600">
+      ¿Eliminar la tarjeta <strong>{{ isDraftCard() ? 'sin título' : c.title }}</strong>? Esta acción no se puede deshacer.
+    </p>
+    @if (deleteError(); as err) {
+      <p class="mt-3 mb-0 text-sm text-red-600">{{ err }}</p>
+    }
+  }
+  <ng-template #footer>
+    <p-button label="Cancelar" severity="secondary" text (onClick)="cancelDelete()" [disabled]="deletingCard()" />
+    <p-button
+      label="Eliminar tarjeta"
+      icon="pi pi-trash"
+      severity="danger"
+      (onClick)="executeDelete()"
+      [loading]="deletingCard()"
+    />
+  </ng-template>
+</p-dialog>

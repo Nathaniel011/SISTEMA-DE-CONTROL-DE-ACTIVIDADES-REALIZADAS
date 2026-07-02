@@ -1,6 +1,7 @@
-import {Component, computed, effect, inject, input, model, OnDestroy, signal} from '@angular/core';
+import {ChangeDetectionStrategy, ChangeDetectorRef, Component, computed, effect, inject, input, model, signal} from '@angular/core';
+import {HttpErrorResponse} from '@angular/common/http';
 import {FormsModule} from '@angular/forms';
-import {Drawer} from 'primeng/drawer';
+import {Dialog} from 'primeng/dialog';
 import {Button} from 'primeng/button';
 import {InputText} from 'primeng/inputtext';
 import {Textarea} from 'primeng/textarea';
@@ -8,20 +9,31 @@ import {Select} from 'primeng/select';
 import {DatePicker} from 'primeng/datepicker';
 import {InputNumber} from 'primeng/inputnumber';
 import {Avatar} from 'primeng/avatar';
-import {Tabs, Tab, TabList, TabPanel, TabPanels} from 'primeng/tabs';
-import {FileUpload} from 'primeng/fileupload';
-import {Image} from 'primeng/image';
+import {Tag} from 'primeng/tag';
 import {WorkService} from '../../../core/services/work.service';
-import {WorkApiService} from '../../../core/services/work-api.service';
-import {firstValueFrom} from 'rxjs';
-import {WORK_PRIORITIES, WorkCard, WorkAttachment} from '../work.models';
-import {formatWorkDate, formatWorkMinutes, formatWorkSeconds, priorityMeta} from '../work.utils';
+import {WorkCardDetailStore} from '../../../core/services/work-card-detail.store';
+import {PermissionsService} from '../../../core/services/permissions.service';
+import {WORK_PRIORITIES, WORK_STATUS_LABELS, WorkCard} from '../work.models';
+import {
+  formatWorkDate,
+  formatWorkMinutes,
+  formatTimeOverrun,
+  formatTimeRemaining,
+  parseWorkDate,
+  formatWorkDateISO,
+  priorityMeta,
+  boardDisplayName,
+  WORK_DRAFT_CARD_TITLE,
+} from '../work.utils';
+import {WorkCardAttachments} from '../work-card-attachments/work-card-attachments';
+import {WorkCardTimePanel} from '../work-card-time-panel/work-card-time-panel';
 
 @Component({
   selector: 'app-work-card-drawer',
+  changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
     FormsModule,
-    Drawer,
+    Dialog,
     Button,
     InputText,
     Textarea,
@@ -29,179 +41,444 @@ import {formatWorkDate, formatWorkMinutes, formatWorkSeconds, priorityMeta} from
     DatePicker,
     InputNumber,
     Avatar,
-    Tabs,
-    Tab,
-    TabList,
-    TabPanel,
-    TabPanels,
-    FileUpload,
-    Image,
+    Tag,
+    WorkCardAttachments,
+    WorkCardTimePanel,
   ],
   templateUrl: './work-card-drawer.html',
 })
-export class WorkCardDrawer implements OnDestroy {
+export class WorkCardDrawer {
+  private cdr = inject(ChangeDetectorRef);
   workService = inject(WorkService);
-  workApi = inject(WorkApiService);
-
-  elapsedSeconds = signal(0);
-  private tick?: ReturnType<typeof setInterval>;
+  detailStore = inject(WorkCardDetailStore);
+  permissions = inject(PermissionsService);
 
   cardId = input<string | null>(null);
   visible = model(false);
 
-  activeTab = signal<string | number>('0');
   commentText = signal('');
-  timeMinutes = signal(30);
-  timeNote = signal('');
-  uploading = signal(false);
+  subtaskTitle = signal('');
+  showTimePanel = signal(false);
+  deleteDialogOpen = signal(false);
+  deletingCard = signal(false);
+  deleteError = signal<string | null>(null);
 
   titleDraft = signal('');
   descriptionDraft = signal('');
+  dueDateDraft = signal<Date | null>(null);
+  priorityDraft = signal<WorkCard['priority']>('medium');
+  assigneeIdDraft = signal<string | null>(null);
+  boardListIdDraft = signal<string | null>(null);
+  estimateMinutesDraft = signal<number | null>(null);
+  saving = signal(false);
+  saveError = signal<string | null>(null);
+  private syncedCardId = signal<string | null>(null);
+  transferError = signal<string | null>(null);
+  transferring = signal(false);
+  moveDialogOpen = signal(false);
+  moveBoardId = signal<string | null>(null);
+  moveListId = signal<string | null>(null);
+  moveAssigneeId = signal<string | null>(null);
 
   card = computed(() => {
     const id = this.cardId();
     return id ? this.workService.getCard(id) : undefined;
   });
 
-  memberOptions = computed(() =>
-    this.workService.members().map(m => ({ label: m.name, value: m.id }))
+  cardDetail = computed(() => this.detailStore.snapshot(this.cardId()));
+
+  isDraftCard = computed(() => {
+    const c = this.card();
+    return !!c && c.title === WORK_DRAFT_CARD_TITLE;
+  });
+
+  board = computed(() => {
+    const c = this.card();
+    return c ? this.workService.getBoard(c.boardId) : undefined;
+  });
+
+  listName = computed(() => {
+    const listId = this.boardListIdDraft() ?? this.card()?.boardListId;
+    if (listId) {
+      const list = this.workService.boardLists().find(l => l.id === listId);
+      return list?.name ?? 'Sin lista';
+    }
+    const c = this.card();
+    if (c) return this.statusLabel(c.columnId);
+    return 'Nueva tarjeta';
+  });
+
+  listOptions = computed(() => {
+    const boardId = this.card()?.boardId;
+    if (!boardId) return [];
+    return this.workService.getBoardLists(boardId).map(list => ({
+      label: list.name,
+      value: list.id,
+    }));
+  });
+
+  memberOptions = computed(() => this.boardMemberSelectOptions(this.board()?.id));
+
+  canChangeAssignee = computed(
+    () => this.workService.canAssignTasks() || this.memberOptions().length > 0
   );
 
+  moveBoardOptions = computed(() =>
+    this.workService.boards().map(b => ({ label: boardDisplayName(b), value: b.id }))
+  );
+
+  moveListOptions = computed(() => {
+    const boardId = this.moveBoardId();
+    if (!boardId) return [];
+    return this.workService.getBoardLists(boardId).map(list => ({
+      label: list.name,
+      value: list.id,
+    }));
+  });
+
+  moveMemberOptions = computed(() => this.boardMemberSelectOptions(this.moveBoardId()));
+
+  canChangeMoveAssignee = computed(
+    () => this.workService.canAssignTasks() || this.moveMemberOptions().length > 0
+  );
+
+  comments = computed(() => {
+    const detail = this.cardDetail();
+    if (detail.loaded) return detail.comments;
+    return this.card()?.comments ?? [];
+  });
+
   priorityOptions = WORK_PRIORITIES.map(p => ({ label: p.label, value: p.value }));
+  canDelete = computed(() => this.workService.canDeleteIssues() && !!this.cardId());
+
+  hasUnsavedChanges = computed(() => {
+    const c = this.card();
+    if (!c) return false;
+
+    const dueIso = this.dueDateDraft() ? formatWorkDateISO(this.dueDateDraft()!) : null;
+    const savedDue = c.dueDate ?? null;
+    const title = this.normalizedTitleDraft(c);
+
+    return (
+      title !== c.title ||
+      this.descriptionDraft().trim() !== (c.description ?? '').trim() ||
+      dueIso !== savedDue ||
+      this.priorityDraft() !== c.priority ||
+      this.assigneeIdDraft() !== (c.assigneeId ?? null) ||
+      this.boardListIdDraft() !== (c.boardListId ?? null) ||
+      this.estimateMinutesDraft() !== (c.estimateMinutes ?? null)
+    );
+  });
+
+  canSave = computed(() => {
+    const c = this.card();
+    if (!c) return false;
+    const title = this.normalizedTitleDraft(c);
+    if (!title || title === WORK_DRAFT_CARD_TITLE) return false;
+    if (this.isDraftCard()) return true;
+    return this.hasUnsavedChanges();
+  });
+
+  saveButtonLabel = computed(() => (this.isDraftCard() ? 'Crear' : 'Guardar'));
 
   constructor() {
     effect(() => {
+      const id = this.cardId();
       const c = this.card();
-      if (c) {
-        this.titleDraft.set(c.title);
-        this.descriptionDraft.set(c.description);
+      const open = this.visible();
+      if (!open || !id || !c) return;
+      if (this.syncedCardId() !== id) {
+        this.loadDraftsFromCard(c);
+        this.syncedCardId.set(id);
       }
     });
-    this.tick = setInterval(() => {
-      const timer = this.workService.activeTimer();
-      if (timer && timer.cardId === this.cardId()) {
-        this.elapsedSeconds.set(this.workService.timerElapsedSeconds());
+
+    effect(() => {
+      const id = this.cardId();
+      const open = this.visible();
+      if (open && id) {
+        void this.detailStore.load(id);
       }
-    }, 1000);
+    });
+
+    effect(() => {
+      if (!this.visible()) {
+        this.syncedCardId.set(null);
+        this.saveError.set(null);
+      }
+    });
   }
 
-  ngOnDestroy(): void {
-    if (this.tick) clearInterval(this.tick);
+  private normalizedTitleDraft(c: WorkCard): string {
+    const title = this.titleDraft().trim();
+    if (title) return title;
+    return c.title === WORK_DRAFT_CARD_TITLE ? WORK_DRAFT_CARD_TITLE : '';
   }
 
-  isTimerRunningHere(): boolean {
-    const timer = this.workService.activeTimer();
-    return !!timer && timer.cardId === this.cardId();
+  private loadDraftsFromCard(c: WorkCard): void {
+    this.titleDraft.set(c.title === WORK_DRAFT_CARD_TITLE ? '' : c.title);
+    this.descriptionDraft.set(c.description ?? '');
+    this.dueDateDraft.set(parseWorkDate(c.dueDate));
+    this.priorityDraft.set(c.priority);
+    this.assigneeIdDraft.set(c.assigneeId ?? null);
+    this.boardListIdDraft.set(c.boardListId ?? null);
+    this.estimateMinutesDraft.set(c.estimateMinutes ?? null);
+    this.saveError.set(null);
   }
 
-  startTimer(): void {
+  async saveAll(): Promise<void> {
     const id = this.cardId();
-    if (!id) return;
-    this.workService.startTimer(id, this.timeNote());
-    this.elapsedSeconds.set(0);
-  }
-
-  stopTimer(): void {
-    this.workService.stopTimer();
-    this.elapsedSeconds.set(0);
-  }
-
-  saveTitle(): void {
-    const id = this.cardId();
-    if (!id) return;
-    this.workService.updateCard(id, { title: this.titleDraft().trim() });
-  }
-
-  saveDescription(): void {
-    const id = this.cardId();
-    if (!id) return;
-    this.workService.updateCard(id, { description: this.descriptionDraft().trim() });
-  }
-
-  updateField(patch: Partial<WorkCard>): void {
-    const id = this.cardId();
-    if (!id) return;
-    this.workService.updateCard(id, patch);
-  }
-
-  onDueDateChange(value: Date | null): void {
-    const iso = value ? value.toISOString().slice(0, 10) : null;
-    this.updateField({ dueDate: iso });
-  }
-
-  dueDateValue(): Date | null {
-    const due = this.card()?.dueDate;
-    return due ? new Date(due) : null;
-  }
-
-  toggleLabel(labelId: string): void {
     const c = this.card();
-    if (!c) return;
-    const labelIds = c.labelIds.includes(labelId)
-      ? c.labelIds.filter(id => id !== labelId)
-      : [...c.labelIds, labelId];
-    this.updateField({ labelIds });
-  }
+    if (!id || !c || this.saving()) return;
 
-  addComment(): void {
-    const id = this.cardId();
-    if (!id) return;
-    this.workService.addComment(id, this.commentText());
-    this.commentText.set('');
-  }
+    const title = this.normalizedTitleDraft(c);
+    if (!title || title === WORK_DRAFT_CARD_TITLE) {
+      this.saveError.set('El título es obligatorio.');
+      return;
+    }
 
-  logTime(): void {
-    const id = this.cardId();
-    if (!id) return;
-    this.workService.logTime(id, this.timeMinutes(), this.timeNote());
-    this.timeNote.set('');
-    this.timeMinutes.set(30);
-  }
+    if (!this.isDraftCard() && !this.hasUnsavedChanges()) return;
 
-  deleteCard(): void {
-    const id = this.cardId();
-    if (!id) return;
-    this.workService.deleteCard(id);
-    this.visible.set(false);
-  }
+    const dueIso = this.dueDateDraft() ? formatWorkDateISO(this.dueDateDraft()!) : null;
+    const description = this.descriptionDraft().trim();
+    const patch: Partial<WorkCard> = {};
 
-  onTabChange(value: string | number | undefined): void {
-    this.activeTab.set(value ?? '0');
-  }
+    if (title !== c.title) patch.title = title;
+    if (description !== (c.description ?? '').trim()) patch.description = description;
+    if (dueIso !== (c.dueDate ?? null)) patch.dueDate = dueIso;
+    if (this.priorityDraft() !== c.priority) patch.priority = this.priorityDraft();
+    if (this.assigneeIdDraft() !== (c.assigneeId ?? null)) {
+      patch.assigneeId = this.assigneeIdDraft();
+    }
+    if (this.boardListIdDraft() !== (c.boardListId ?? null)) {
+      patch.boardListId = this.boardListIdDraft();
+    }
+    if (this.estimateMinutesDraft() !== (c.estimateMinutes ?? null)) {
+      patch.estimateMinutes = this.estimateMinutesDraft();
+    }
 
-  async onFileUpload(event: any): Promise<void> {
-    const id = this.cardId();
-    if (!id || event.files.length === 0) return;
+    if (!Object.keys(patch).length) return;
 
-    this.uploading.set(true);
+    this.saving.set(true);
+    this.saveError.set(null);
     try {
-      for (const file of event.files) {
-        await firstValueFrom(this.workApi.uploadFile(file, id));
+      await this.workService.updateCardAsync(id, patch);
+      const updated = this.workService.getCard(id);
+      if (updated) {
+        this.loadDraftsFromCard(updated);
       }
-      // Reload card to get updated attachments
-      await this.workService.loadFromApi();
+    } catch {
+      this.saveError.set(
+        this.isDraftCard()
+          ? 'No se pudo crear la tarjeta. Inténtalo de nuevo.'
+          : 'No se pudo guardar la tarjeta. Inténtalo de nuevo.'
+      );
     } finally {
-      this.uploading.set(false);
+      this.saving.set(false);
+      this.cdr.markForCheck();
     }
   }
 
-  async deleteAttachment(attachmentId: string): Promise<void> {
-    await firstValueFrom(this.workApi.deleteFile(attachmentId));
-    await this.workService.loadFromApi();
+  async close(): Promise<void> {
+    const id = this.cardId();
+    if (id && this.isDiscardableDraft()) {
+      try {
+        await this.workService.deleteCard(id);
+        this.detailStore.invalidate(id);
+      } catch {
+        // Si falla el borrado del borrador, cerramos igualmente.
+      }
+    }
+    this.visible.set(false);
+    this.showTimePanel.set(false);
   }
 
-  isImage(mimeType: string): boolean {
-    return mimeType.startsWith('image/');
+  private isDiscardableDraft(): boolean {
+    const c = this.card();
+    if (!c || c.title !== WORK_DRAFT_CARD_TITLE) return false;
+    if (this.hasUnsavedChanges()) return false;
+    if ((c.comments?.length ?? 0) > 0) return false;
+    if ((c.attachments?.length ?? 0) > 0) return false;
+    if (c.trackedMinutes > 0) return false;
+    const detail = this.cardDetail();
+    if (detail.loaded) {
+      if (detail.attachments.length > 0) return false;
+      if (detail.comments.length > 0) return false;
+    }
+    return true;
   }
 
-  formatFileSize(bytes: number): string {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  openMoveDialog(): void {
+    const c = this.card();
+    if (!c) return;
+    this.moveBoardId.set(c.boardId);
+    this.moveListId.set(c.boardListId ?? this.defaultListIdForBoard(c.boardId));
+    this.moveAssigneeId.set(c.assigneeId);
+    this.transferError.set(null);
+    this.moveDialogOpen.set(true);
+    this.cdr.markForCheck();
+  }
+
+  closeMoveDialog(): void {
+    this.moveDialogOpen.set(false);
+    this.transferError.set(null);
+  }
+
+  onMoveBoardChange(boardId: string): void {
+    this.moveBoardId.set(boardId);
+    const lists = this.workService.getBoardLists(boardId);
+    const currentList = this.moveListId();
+    const listStillValid = currentList && lists.some(l => l.id === currentList);
+    this.moveListId.set(listStillValid ? currentList : this.defaultListIdForBoard(boardId));
+
+    const board = this.workService.getBoard(boardId);
+    const assignee = this.moveAssigneeId();
+    if (assignee && board && !board.memberIds.includes(assignee)) {
+      this.moveAssigneeId.set(null);
+    }
+  }
+
+  async confirmMove(): Promise<void> {
+    const c = this.card();
+    const id = this.cardId();
+    const targetBoardId = this.moveBoardId();
+    const targetListId = this.moveListId();
+    if (!c || !id || !targetBoardId || !targetListId || this.transferring()) return;
+
+    const targetAssigneeId = this.moveAssigneeId();
+    const boardChanged = targetBoardId !== c.boardId;
+    const listChanged = targetListId !== c.boardListId;
+    const assigneeChanged = targetAssigneeId !== c.assigneeId;
+
+    if (!boardChanged && !listChanged && !assigneeChanged) {
+      this.closeMoveDialog();
+      return;
+    }
+
+    this.transferring.set(true);
+    this.transferError.set(null);
+    try {
+      if (boardChanged) {
+        await this.workService.moveCardToBoard(id, targetBoardId, 'todo', undefined, targetListId);
+      } else if (listChanged) {
+        await this.workService.updateCardAsync(id, { boardListId: targetListId });
+      }
+
+      if (assigneeChanged) {
+        await this.workService.updateCardAsync(id, { assigneeId: targetAssigneeId });
+      }
+
+      this.closeMoveDialog();
+      if (boardChanged) {
+        this.visible.set(false);
+      }
+    } catch {
+      this.transferError.set('No se pudo mover la tarjeta. Verifica tablero, lista y responsable.');
+    } finally {
+      this.transferring.set(false);
+      this.cdr.markForCheck();
+    }
+  }
+
+  private boardMemberSelectOptions(boardId: string | null | undefined): { label: string; value: string }[] {
+    if (!boardId) return [];
+    const board = this.workService.getBoard(boardId);
+    const boardMembers = board
+      ? this.workService.members().filter(m => board.memberIds.includes(m.id))
+      : [];
+
+    let members = boardMembers;
+    if (this.workService.canAssignTasks()) {
+      if (this.permissions.isSecretary()) {
+        members = this.workService.staffMembers().filter(m => boardMembers.some(b => b.id === m.id));
+      }
+    } else {
+      const selfId = this.workService.currentMemberId();
+      members = selfId ? boardMembers.filter(m => m.id === selfId) : [];
+    }
+
+    return members.map(m => ({ label: m.name, value: m.id }));
+  }
+
+  private defaultListIdForBoard(boardId: string): string | null {
+    const lists = this.workService.getBoardLists(boardId);
+    return lists.find(l => l.name.toLowerCase() === 'tarea')?.id ?? lists[0]?.id ?? null;
+  }
+
+  async addComment(): Promise<void> {
+    const id = this.cardId();
+    const text = this.commentText().trim();
+    if (!id || !text) return;
+    const comment = await this.workService.addComment(id, text);
+    if (comment) {
+      this.detailStore.addComment(id, comment);
+    }
+    this.commentText.set('');
+  }
+
+  createSubtask(): void {
+    const id = this.cardId();
+    const title = this.subtaskTitle().trim();
+    if (!id || !title) return;
+    this.workService.createSubtask(id, title);
+    this.subtaskTitle.set('');
+  }
+
+  openDeleteDialog(): void {
+    this.deleteError.set(null);
+    this.deleteDialogOpen.set(true);
+    this.cdr.markForCheck();
+  }
+
+  cancelDelete(): void {
+    this.deleteDialogOpen.set(false);
+    this.deleteError.set(null);
+  }
+
+  async executeDelete(): Promise<void> {
+    const id = this.cardId();
+    if (!id || this.deletingCard()) return;
+    this.deletingCard.set(true);
+    this.deleteError.set(null);
+    try {
+      await this.workService.deleteCard(id);
+      this.detailStore.invalidate(id);
+      this.deleteDialogOpen.set(false);
+      this.visible.set(false);
+    } catch (error) {
+      this.deleteError.set(this.resolveDeleteError(error));
+    } finally {
+      this.deletingCard.set(false);
+    }
+  }
+
+  statusLabel(columnId: WorkCard['columnId']): string {
+    return WORK_STATUS_LABELS[columnId] ?? columnId;
+  }
+
+  private resolveDeleteError(error: unknown): string {
+    if (error instanceof HttpErrorResponse) {
+      if (typeof error.error === 'string' && error.error.trim()) {
+        return error.error;
+      }
+      const message = (error.error as { message?: string } | null)?.message;
+      if (message) {
+        return message;
+      }
+      if (error.status === 403) {
+        return 'No tienes permiso para eliminar esta tarjeta.';
+      }
+      if (error.status === 404) {
+        return 'La tarjeta ya no existe.';
+      }
+    }
+    return 'No se pudo eliminar la tarjeta. Inténtalo de nuevo.';
   }
 
   formatMinutes = formatWorkMinutes;
   formatDate = formatWorkDate;
-  formatSeconds = formatWorkSeconds;
+  formatTimeOverrun = formatTimeOverrun;
+  formatTimeRemaining = formatTimeRemaining;
   priorityMeta = priorityMeta;
+  boardDisplayName = boardDisplayName;
 }

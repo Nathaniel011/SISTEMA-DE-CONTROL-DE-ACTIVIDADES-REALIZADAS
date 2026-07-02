@@ -6,14 +6,14 @@
     <ng-template #headless>
       <app-sidebar
         [isMobile]="true"
-        [menuItems]="menuItems"
+        [menuItems]="allMenuItems()"
         (itemClick)="closeNavigationDrawers()"
       />
     </ng-template>
   </p-drawer>
   <app-sidebar
     [isMobile]="false"
-    [menuItems]="menuItems"
+    [menuItems]="allMenuItems()"
     class="hidden md:block"
   />
   <div class="layout-container" [class.layout-container-work]="isWorkView()">
@@ -23,7 +23,7 @@
           <ng-template #separator> / </ng-template>
         </p-breadcrumb>
         <p-button icon="pi pi-bars" class="md:hidden" (click)="drawerOpen = true"/>
-        <div class="app-avatar" (click)="accountDrawerOpen = true">
+        <div class="app-avatar" (click)="openAccountDrawer()">
           <p-avatar icon="pi pi-user" style="background-color: #ccfbf1; color: #134e4a" shape="circle" />
           <span>{{ userDisplayName() }}</span>
         </div>
@@ -42,15 +42,7 @@
             badgeSeverity="danger"
           />
         }
-        <p-button
-          label="Nueva incidencia"
-          icon="pi pi-plus"
-          severity="primary"
-          routerLink="/work/issues"
-          [queryParams]="{ new: '1' }"
-          class="hidden sm:inline-flex"
-        />
-        <div class="app-avatar" (click)="accountDrawerOpen = true">
+        <div class="app-avatar" (click)="openAccountDrawer()">
           <p-avatar icon="pi pi-user" style="background-color: #ccfbf1; color: #134e4a" shape="circle" />
           <span class="hidden sm:inline">{{ userDisplayName() }}</span>
         </div>
@@ -92,8 +84,16 @@
   </div>
 </p-drawer>
 
-<p-drawer [(visible)]="accountDrawerOpen" position="right">
-  @if (authService.currentUser(); as user) {
+<p-drawer
+  [(visible)]="accountDrawerOpen"
+  position="right"
+  [header]="accountDrawerHeader()"
+  [style]="accountDrawerStyle()"
+  (visibleChange)="onAccountDrawerVisibleChange($event)"
+>
+  @if (accountPanel() === 'users') {
+    <app-account-users-panel (back)="accountPanel.set('menu')" />
+  } @else if (authService.currentUser(); as user) {
     <div class="flex flex-col gap-6 p-2">
       <div class="border border-surface-200 rounded-xl p-4">
         <div class="flex items-center gap-3 mb-4">
@@ -106,7 +106,7 @@
         <div class="text-sm text-surface-500 mb-3">{{ user.email }}</div>
         <div class="flex flex-wrap gap-2">
           @for (role of user.roles; track role) {
-            <p-tag [value]="role" severity="contrast" />
+            <p-tag [value]="roleLabel(role)" severity="contrast" />
           }
         </div>
       </div>
@@ -124,6 +124,22 @@
             <div class="ml-4">
               <div class="font-semibold">{{ link.label }}</div>
               <div class="text-surface-500 text-sm">{{ link.description }}</div>
+            </div>
+          </button>
+        }
+
+        @if (permissions.canManageUsers()) {
+          <button
+            type="button"
+            class="cursor-pointer flex p-4 items-center border border-surface-200 rounded-lg hover:bg-surface-100 transition-colors duration-150 text-left"
+            (click)="openUsersPanel()"
+          >
+            <span>
+              <i class="pi pi-users text-xl text-primary"></i>
+            </span>
+            <div class="ml-4">
+              <div class="font-semibold">Administración de usuarios</div>
+              <div class="text-surface-500 text-sm">Crear y gestionar usuarios del sistema</div>
             </div>
           </button>
         }

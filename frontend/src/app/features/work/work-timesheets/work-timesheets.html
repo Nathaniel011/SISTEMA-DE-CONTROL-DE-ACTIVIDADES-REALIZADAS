@@ -39,7 +39,7 @@
     </div>
   </div>
 
-  <p-table [value]="entries()" [tableStyle]="{ 'min-width': '48rem' }">
+  <p-table [value]="entries()" [loading]="loadingEntries()" [tableStyle]="{ 'min-width': '48rem' }">
     <ng-template #header>
       <tr>
         <th>Incidencia</th>
@@ -51,7 +51,7 @@
     </ng-template>
     <ng-template #body let-row>
       <tr>
-        <td class="font-mono text-primary-600">{{ workService.getIssueKey(row.card) }}</td>
+        <td class="font-mono text-primary-600">{{ row.cardLabel }}</td>
         <td>{{ workService.getMember(row.entry.memberId)?.name }}</td>
         <td>{{ formatMinutes(row.entry.minutes) }}</td>
         <td>{{ row.entry.note || '—' }}</td>

@@ -8,6 +8,7 @@ import {providePrimeNG} from 'primeng/config';
 import {definePreset} from '@primeuix/themes';
 import lang from '../assets/lang.json';
 import {authInterceptor} from './core/interceptors/auth.interceptor';
+import {errorInterceptor} from './core/interceptors/error.interceptor';
 
 const Preset = definePreset(Aura, {
   components: {
@@ -86,7 +87,7 @@ const Preset = definePreset(Aura, {
 export const appConfig: ApplicationConfig = {
   providers: [
     provideBrowserGlobalErrorListeners(),
-    provideHttpClient(withInterceptors([authInterceptor])),
+    provideHttpClient(withInterceptors([authInterceptor, errorInterceptor])),
     provideRouter(routes),
     providePrimeNG({
       ripple: true,

@@ -1,0 +1,117 @@
+<div class="work-card-attachments-block">
+  <input
+    #fileInput
+    type="file"
+    class="sr-only"
+    multiple
+    accept="image/*,.pdf"
+    (change)="onFilesSelected($event)"
+  />
+
+  <p-button
+    icon="pi pi-paperclip"
+    [label]="uploading() ? (uploadProgress() || 'Subiendo…') : 'Adjuntar'"
+    size="small"
+    severity="secondary"
+    [outlined]="true"
+    [loading]="uploading()"
+    [disabled]="uploading()"
+    (onClick)="openPicker()"
+  />
+
+  @if (uploadError(); as uploadErr) {
+    <p class="text-sm text-red-600 m-0 mt-2">{{ uploadErr }}</p>
+  }
+
+  @if (deleteError(); as err) {
+    <p class="text-sm text-red-600 m-0 mt-2">{{ err }}</p>
+  }
+
+  @if (detail().loading && !detail().loaded) {
+    <div class="work-card-detail-loading">
+      <i class="pi pi-spin pi-spinner"></i>
+      <span>Cargando adjuntos…</span>
+    </div>
+  } @else if (attachments().length) {
+    <div class="work-card-modal-section">
+      <div class="work-card-modal-section-title">
+        <i class="pi pi-paperclip"></i>
+        <span>Adjuntos ({{ attachments().length }})</span>
+      </div>
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        @for (attachment of attachments(); track attachment.id) {
+          <div class="work-card-attachment" [class.opacity-60]="deletingId() === attachment.id">
+            @if (isImage(attachment.mimeType)) {
+              <button
+                type="button"
+                class="work-card-attachment-thumb"
+                (click)="openPreview(attachment)"
+                [disabled]="loadingBlobId() === attachment.id"
+                [attr.aria-label]="'Ver ' + attachment.fileName"
+              >
+                @if (thumbnailSrc(attachment); as src) {
+                  <img
+                    [src]="src"
+                    [alt]="attachment.fileName"
+                    loading="lazy"
+                    decoding="async"
+                  />
+                } @else {
+                  <span class="work-card-attachment-placeholder">
+                    <i class="pi pi-spin pi-spinner"></i>
+                  </span>
+                }
+              </button>
+            } @else {
+              <button
+                type="button"
+                class="work-card-attachment-file w-full"
+                (click)="openPreview(attachment)"
+                [attr.aria-label]="'Abrir ' + attachment.fileName"
+              >
+                <span class="work-card-attachment-ext">{{ fileExtension(attachment.fileName) }}</span>
+                <i class="pi pi-download text-lg text-primary-600"></i>
+              </button>
+            }
+            <div class="text-xs font-medium truncate mt-2" [title]="attachment.fileName">
+              {{ attachment.fileName }}
+            </div>
+            <div class="text-xs text-surface-500">{{ formatFileSize(attachment.fileSize) }}</div>
+            <p-button
+              icon="pi pi-trash"
+              size="small"
+              severity="danger"
+              text
+              class="mt-1"
+              [loading]="deletingId() === attachment.id"
+              [disabled]="!!deletingId()"
+              (onClick)="deleteAttachment(attachment.id, $event)"
+            />
+          </div>
+        }
+      </div>
+    </div>
+  }
+</div>
+
+@if (preview(); as item) {
+  <p-dialog
+    [visible]="true"
+    (visibleChange)="!$event && closePreview()"
+    [modal]="true"
+    [dismissableMask]="true"
+    [draggable]="false"
+    [resizable]="false"
+    [header]="item.fileName"
+    [style]="{ width: 'min(96vw, 56rem)' }"
+    contentStyleClass="p-0"
+  >
+    @if (previewSrc(); as src) {
+      <img
+        [src]="src"
+        [alt]="item.fileName"
+        class="w-full max-h-[80vh] object-contain bg-surface-950"
+      />
+    }
+  </p-dialog>
+}

@@ -7,6 +7,7 @@ import jakarta.validation.Valid;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -19,9 +20,22 @@ public class WorkController {
         this.workService = workService;
     }
 
+    @GetMapping("/work/general-board")
+    public WorkBootstrapDto.BoardDto generalBoard(@AuthenticationPrincipal ScarPrincipal principal) {
+        return workService.getGeneralBoard(principal);
+    }
+
     @GetMapping("/work/bootstrap")
     public WorkBootstrapDto bootstrap(@AuthenticationPrincipal ScarPrincipal principal) {
         return workService.bootstrap(principal);
+    }
+
+    @GetMapping("/issues/{id}/details")
+    public IssueDetailsDto getIssueDetails(
+        @AuthenticationPrincipal ScarPrincipal principal,
+        @PathVariable UUID id
+    ) {
+        return workService.getIssueDetails(principal, id);
     }
 
     @PostMapping("/issues")
@@ -45,12 +59,13 @@ public class WorkController {
     public WorkBootstrapDto.CardDto moveIssue(
         @AuthenticationPrincipal ScarPrincipal principal,
         @PathVariable UUID id,
-        @Valid @RequestBody MoveIssueRequest request
+        @RequestBody MoveIssueRequest request
     ) {
         return workService.moveIssue(principal, id, request);
     }
 
     @DeleteMapping("/issues/{id}")
+    @org.springframework.web.bind.annotation.ResponseStatus(org.springframework.http.HttpStatus.NO_CONTENT)
     public void deleteIssue(@AuthenticationPrincipal ScarPrincipal principal, @PathVariable UUID id) {
         workService.deleteIssue(principal, id);
     }
@@ -84,6 +99,11 @@ public class WorkController {
     @PostMapping("/time/timer/stop")
     public WorkBootstrapDto.TimeEntryDto stopTimer(@AuthenticationPrincipal ScarPrincipal principal) {
         return workService.stopTimer(principal);
+    }
+
+    @GetMapping("/time/entries")
+    public List<TimeEntryWithIssueDto> listTimeEntries(@AuthenticationPrincipal ScarPrincipal principal) {
+        return workService.listTimeEntries(principal);
     }
 
     @GetMapping("/gantt")
@@ -149,6 +169,15 @@ public class WorkController {
         @PathVariable UUID id,
         @Valid @RequestBody UpdateProjectMembersRequest request
     ) {
-        return workService.updateProjectMembers(id, request);
+        return workService.updateProjectMembers(principal, id, request);
+    }
+
+    @DeleteMapping("/projects/{id}")
+    @ResponseStatus(org.springframework.http.HttpStatus.NO_CONTENT)
+    public void deleteProject(
+        @AuthenticationPrincipal ScarPrincipal principal,
+        @PathVariable UUID id
+    ) {
+        workService.deleteProject(principal, id);
     }
 }

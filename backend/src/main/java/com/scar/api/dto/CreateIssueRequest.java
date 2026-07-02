@@ -5,8 +5,10 @@ import jakarta.validation.constraints.NotBlank;
 public record CreateIssueRequest(
     @NotBlank String boardId,
     @NotBlank String title,
-    String type,
     String columnId,
+    String boardListId,
+    String parentIssueId,
+    String assigneeId,
     String requesterName,
     String requesterPhone,
     String requesterEmail,

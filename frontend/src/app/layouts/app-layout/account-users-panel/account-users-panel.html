@@ -1,0 +1,111 @@
+<div class="flex flex-col gap-4 p-2 h-full">
+  <div class="flex items-center gap-2">
+    <p-button icon="pi pi-arrow-left" severity="secondary" text (onClick)="back.emit()" />
+    <p-button label="Nuevo usuario" icon="pi pi-plus" severity="primary" class="ml-auto" (onClick)="openCreate()" />
+  </div>
+
+  @if (flashPassword()) {
+    <p-message severity="success" [text]="'Contraseña temporal: ' + flashPassword()" />
+  }
+  @if (deleteError()) {
+    <p-message severity="error" [text]="deleteError()!" />
+  }
+
+  <p-iconfield class="w-full">
+    <p-inputicon class="pi pi-search" />
+    <input
+      pInputText
+      class="w-full"
+      placeholder="Buscar usuarios"
+      [ngModel]="usersService.searchTerm()"
+      (ngModelChange)="onSearch($event)"
+    />
+  </p-iconfield>
+
+  <div class="flex flex-col gap-3 overflow-y-auto flex-1 min-h-0 pb-2">
+    @for (user of usersService.filteredUsers(); track user.id) {
+      <div class="border border-surface-200 rounded-xl p-4 bg-surface-0">
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0">
+            <div class="font-semibold truncate">{{ user.fullName }}</div>
+            <div class="text-sm text-surface-500 truncate">{{ user.username }} · {{ user.email }}</div>
+          </div>
+          <p-tag [value]="user.active ? 'Activo' : 'Inactivo'" [severity]="user.active ? 'success' : 'secondary'" />
+        </div>
+
+        <div class="flex flex-wrap gap-1 mt-2">
+          @for (role of user.roles; track role) {
+            <p-tag [value]="roleLabel(role)" severity="contrast" />
+          } @empty {
+            <span class="text-xs text-surface-500">Sin roles</span>
+          }
+        </div>
+
+        <div class="text-xs text-surface-400 mt-2">Creado: {{ user.createdAt | date: 'short' }}</div>
+
+        <div class="flex items-center justify-between gap-3 mt-3 pt-3 border-t border-surface-100">
+          <div class="flex items-center gap-2">
+            <p-toggleswitch
+              [ngModel]="user.active"
+              (ngModelChange)="toggleStatus(user.id, $event)"
+              [inputId]="'account-user-status-' + user.id"
+            />
+            <label class="text-sm" [for]="'account-user-status-' + user.id">Activo</label>
+          </div>
+          <div class="flex gap-1">
+            <p-button label="Ver" icon="pi pi-eye" text size="small" (onClick)="openUser(user, 'view')" />
+            <p-button label="Editar" icon="pi pi-pencil" text size="small" (onClick)="openUser(user, 'edit')" />
+            <p-button
+              icon="pi pi-trash"
+              text
+              size="small"
+              severity="danger"
+              (onClick)="openDeleteUserDialog(user)"
+            />
+          </div>
+        </div>
+      </div>
+    } @empty {
+      <p class="text-surface-500 text-sm m-0">No hay usuarios que coincidan con la búsqueda.</p>
+    }
+  </div>
+</div>
+
+<p-dialog
+  [header]="formMode() === 'create' ? 'Nuevo usuario' : formMode() === 'edit' ? 'Editar usuario' : 'Detalle de usuario'"
+  [modal]="true"
+  [style]="{ width: 'min(36rem, 95vw)' }"
+  [visible]="formOpen()"
+  (visibleChange)="formOpen.set($event)"
+>
+  @if (formOpen()) {
+    <nv-users-form
+      [embedded]="true"
+      [formMode]="formMode()"
+      [userId]="selectedUserId()"
+      (cancelled)="closeForm()"
+      (saved)="onUserSaved($event)"
+    />
+  }
+</p-dialog>
+
+<p-dialog
+  header="Confirmar eliminación"
+  [modal]="true"
+  [closable]="false"
+  [draggable]="false"
+  [resizable]="false"
+  [style]="{ width: '28rem' }"
+  [visible]="deleteDialogOpen()"
+  (visibleChange)="deleteDialogOpen.set($event)"
+>
+  @if (userToDelete(); as user) {
+    <p class="m-0 text-surface-600">
+      ¿Eliminar a <strong>{{ user.fullName }}</strong> ({{ user.username }})? Esta acción no se puede deshacer.
+    </p>
+  }
+  <ng-template #footer>
+    <p-button label="Cancelar" severity="secondary" text (onClick)="cancelDeleteUser()" [disabled]="deletingUser()" />
+    <p-button label="Eliminar usuario" icon="pi pi-trash" severity="danger" (onClick)="executeDeleteUser()" [loading]="deletingUser()" />
+  </ng-template>
+</p-dialog>

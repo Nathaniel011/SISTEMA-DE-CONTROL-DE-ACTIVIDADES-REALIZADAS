@@ -47,8 +47,8 @@ export class AuthService {
       this.setSession('mock-token', {
         id: 'mock-1',
         fullName: 'Pedro Condori',
-        username: payload.username || 'pcondori',
-        email: 'pedro.condori@scar.local',
+        username: payload.username || 'administrador',
+        email: 'admin@gmail.com',
         roles: ['Administrador'],
         active: true,
       });
@@ -85,8 +85,18 @@ export class AuthService {
     localStorage.setItem(USER_KEY, JSON.stringify(next));
   }
 
-  changePassword(_payload: ChangePasswordPayload): void {
-    // Endpoint de cambio de contraseña pendiente en el backend.
+  changePassword(payload: ChangePasswordPayload): Promise<void> {
+    if (!environment.useApi) {
+      return Promise.resolve();
+    }
+
+    return firstValueFrom(
+      this.http.put<void>(`${environment.apiUrl}/api/auth/password`, {
+        currentPassword: payload.currentPassword,
+        newPassword: payload.newPassword,
+        confirmPassword: payload.confirmPassword,
+      })
+    );
   }
 
   private async validateSession(): Promise<void> {

@@ -32,20 +32,20 @@ export class WorkKnowledge implements OnInit {
   loading = signal(false);
   saving = signal(false);
   query = signal('');
-  selectedProjectId = signal<string | null>(null);
+  selectedBoardId = signal<string | null>(null);
 
   editorTitle = signal('');
   editorContent = signal('');
   editorTags = signal('');
-  editorProjectId = signal<string | null>(null);
+  editorBoardId = signal<string | null>(null);
   editorStatus = signal<'draft' | 'published' | 'archived'>('draft');
 
-  projectFilterOptions = computed(() => [
-    { label: 'Todos los proyectos', value: null },
+  boardFilterOptions = computed(() => [
+    { label: 'Todos los tableros', value: null },
     ...this.workService.boards().map(board => ({ label: board.name, value: board.id })),
   ]);
 
-  projectEditorOptions = computed(() => [
+  boardEditorOptions = computed(() => [
     { label: 'General', value: null },
     ...this.workService.boards().map(board => ({ label: board.name, value: board.id })),
   ]);
@@ -58,14 +58,14 @@ export class WorkKnowledge implements OnInit {
 
   visibleArticles = computed(() => {
     const q = this.query().trim().toLowerCase();
-    const projectId = this.selectedProjectId();
+    const boardId = this.selectedBoardId();
     return this.articles().filter(article => {
-      const matchesProject = !projectId || article.projectId === projectId;
+      const matchesBoard = !boardId || article.projectId === boardId;
       const matchesQuery = !q
         || article.title.toLowerCase().includes(q)
         || article.content.toLowerCase().includes(q)
         || article.tags.some(tag => tag.toLowerCase().includes(q));
-      return matchesProject && matchesQuery;
+      return matchesBoard && matchesQuery;
     });
   });
 
@@ -82,7 +82,7 @@ export class WorkKnowledge implements OnInit {
     try {
       if (environment.useApi) {
         const articles = await firstValueFrom(
-          this.workApi.listKnowledgeArticles(this.selectedProjectId(), this.query())
+          this.workApi.listKnowledgeArticles(this.selectedBoardId(), this.query())
         );
         this.articles.set(articles);
       } else {
@@ -108,7 +108,7 @@ export class WorkKnowledge implements OnInit {
     this.editorTitle.set(article.title);
     this.editorContent.set(article.content);
     this.editorTags.set(article.tags.join(', '));
-    this.editorProjectId.set(article.projectId);
+    this.editorBoardId.set(article.projectId);
     this.editorStatus.set(article.status);
   }
 
@@ -118,7 +118,7 @@ export class WorkKnowledge implements OnInit {
     this.editorTitle.set('Nuevo articulo');
     this.editorContent.set('');
     this.editorTags.set('');
-    this.editorProjectId.set(this.selectedProjectId());
+    this.editorBoardId.set(this.selectedBoardId());
     this.editorStatus.set('draft');
   }
 
@@ -130,7 +130,7 @@ export class WorkKnowledge implements OnInit {
     this.saving.set(true);
     try {
       const payload: KnowledgeArticlePayload = {
-        projectId: this.editorProjectId(),
+        projectId: this.editorBoardId(),
         title,
         content: this.editorContent(),
         tags: this.parseTags(this.editorTags()),

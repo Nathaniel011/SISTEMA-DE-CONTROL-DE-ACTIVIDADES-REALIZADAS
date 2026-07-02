@@ -1,18 +1,5 @@
 export type WorkPriority = 'low' | 'medium' | 'high' | 'critical';
 export type WorkColumnId = 'registered' | 'in_assignment' | 'backlog' | 'todo' | 'in_progress' | 'review' | 'done' | 'closed';
-export type WorkIssueType = 'task' | 'bug' | 'feature' | 'chore';
-
-export const WORK_ISSUE_TYPES: {
-  value: WorkIssueType;
-  label: string;
-  letter: string;
-  color: string;
-}[] = [
-  { value: 'task', label: 'Tarea', letter: 'T', color: '#14b8a6' },
-  { value: 'bug', label: 'Error', letter: 'E', color: '#ef4444' },
-  { value: 'feature', label: 'Función', letter: 'F', color: '#eab308' },
-  { value: 'chore', label: 'Mantenimiento', letter: 'M', color: '#ec4899' },
-];
 
 export const WORK_STATUS_LABELS: Record<WorkColumnId, string> = {
   registered: 'Registrada',
@@ -25,17 +12,12 @@ export const WORK_STATUS_LABELS: Record<WorkColumnId, string> = {
   closed: 'Cerrada',
 };
 
-export interface WorkLabel {
-  id: string;
-  name: string;
-  color: string;
-}
-
 export interface WorkMember {
   id: string;
   name: string;
   initials: string;
   role: string;
+  roles?: string[];
 }
 
 export interface WorkComment {
@@ -62,18 +44,24 @@ export interface WorkAttachment {
   createdAt: string;
 }
 
+export interface WorkCardCreateContext {
+  boardId: string;
+  columnId?: WorkColumnId;
+  boardListId?: string | null;
+  incoming?: boolean;
+}
+
 export interface WorkCard {
   id: string;
   boardId: string;
   boardListId?: string | null;
+  parentIssueId?: string | null;
   issueNumber: number;
-  type: WorkIssueType;
   columnId: WorkColumnId;
   title: string;
   description: string;
   priority: WorkPriority;
   assigneeId: string | null;
-  labelIds: string[];
   dueDate: string | null;
   estimateMinutes: number | null;
   trackedMinutes: number;
@@ -118,8 +106,8 @@ export interface WorkBoardList {
 
 export interface WorkState {
   boards: WorkBoard[];
+  boardLists: WorkBoardList[];
   cards: WorkCard[];
-  labels: WorkLabel[];
   members: WorkMember[];
   activeTimer: WorkActiveTimer | null;
 }
@@ -174,15 +162,17 @@ export function createDefaultWorkState(): WorkState {
     { id: 'm4', name: 'Sofía Vega', initials: 'SV', role: 'Product Owner' },
   ];
 
-  const labels: WorkLabel[] = [
-    { id: 'l1', name: 'Frontend', color: '#14b8a6' },
-    { id: 'l2', name: 'Backend', color: '#0d9488' },
-    { id: 'l3', name: 'Bug', color: '#ef4444' },
-    { id: 'l4', name: 'Mejora', color: '#8b5cf6' },
-    { id: 'l5', name: 'Documentación', color: '#64748b' },
-  ];
-
   const boards: WorkBoard[] = [
+    {
+      id: 'b0',
+      name: 'Tablero general',
+      description: '',
+      key: 'GEN',
+      accent: 'bg-primary-600',
+      memberIds: ['m1', 'm2', 'm3', 'm4'],
+      type: 'general',
+      createdAt: '2026-05-01T10:00:00.000Z',
+    },
     {
       id: 'b1',
       name: 'Plataforma SCAR',
@@ -211,13 +201,11 @@ export function createDefaultWorkState(): WorkState {
       id: 'c1',
       boardId: 'b1',
       issueNumber: 1,
-      type: 'feature',
       columnId: 'in_progress',
       title: 'Diseñar módulo de trabajo Kanban',
       description: 'Tablero con columnas, tarjetas arrastrables y drawer de detalle al estilo Trello/YouTrack.',
       priority: 'high',
       assigneeId: 'm2',
-      labelIds: ['l1', 'l4'],
       dueDate: '2026-05-20',
       estimateMinutes: 480,
       trackedMinutes: 210,
@@ -242,13 +230,11 @@ export function createDefaultWorkState(): WorkState {
       id: 'c2',
       boardId: 'b1',
       issueNumber: 2,
-      type: 'task',
       columnId: 'todo',
       title: 'Integrar API de usuarios',
       description: 'Conectar listado y formularios con backend real.',
       priority: 'medium',
       assigneeId: 'm2',
-      labelIds: ['l2'],
       dueDate: '2026-05-25',
       estimateMinutes: 360,
       trackedMinutes: 0,
@@ -263,13 +249,11 @@ export function createDefaultWorkState(): WorkState {
       id: 'c3',
       boardId: 'b1',
       issueNumber: 3,
-      type: 'bug',
       columnId: 'review',
       title: 'Revisar flujo de autenticación',
       description: 'Validar guards, login y persistencia de sesión.',
       priority: 'medium',
       assigneeId: 'm3',
-      labelIds: ['l3'],
       dueDate: '2026-05-18',
       estimateMinutes: 180,
       trackedMinutes: 175,
@@ -286,13 +270,11 @@ export function createDefaultWorkState(): WorkState {
       id: 'c4',
       boardId: 'b1',
       issueNumber: 4,
-      type: 'task',
       columnId: 'backlog',
       title: 'Dashboard de métricas operativas',
       description: 'Gráficos de atenciones, servicios y cobros.',
       priority: 'low',
       assigneeId: 'm4',
-      labelIds: ['l1'],
       dueDate: null,
       estimateMinutes: 600,
       trackedMinutes: 0,
@@ -307,13 +289,11 @@ export function createDefaultWorkState(): WorkState {
       id: 'c5',
       boardId: 'b1',
       issueNumber: 5,
-      type: 'chore',
       columnId: 'done',
       title: 'Definir preset de colores teal',
       description: 'Tema PrimeNG alineado a rgb(20, 184, 166).',
       priority: 'medium',
       assigneeId: 'm1',
-      labelIds: ['l1', 'l5'],
       dueDate: '2026-05-10',
       estimateMinutes: 120,
       trackedMinutes: 130,
@@ -328,13 +308,11 @@ export function createDefaultWorkState(): WorkState {
       id: 'c6',
       boardId: 'b2',
       issueNumber: 1,
-      type: 'bug',
       columnId: 'in_progress',
       title: 'Corregir validación en formulario de difuntos',
       description: 'Campos obligatorios y mensajes de error.',
       priority: 'critical',
       assigneeId: 'm3',
-      labelIds: ['l3', 'l2'],
       dueDate: '2026-05-16',
       estimateMinutes: 240,
       trackedMinutes: 95,
@@ -349,13 +327,11 @@ export function createDefaultWorkState(): WorkState {
       id: 'c7',
       boardId: 'b2',
       issueNumber: 2,
-      type: 'task',
       columnId: 'todo',
       title: 'Exportar reportes a PDF',
       description: 'Generación desde plantillas del módulo reportes.',
       priority: 'high',
       assigneeId: 'm1',
-      labelIds: ['l2'],
       dueDate: '2026-05-22',
       estimateMinutes: 300,
       trackedMinutes: 0,
@@ -368,7 +344,7 @@ export function createDefaultWorkState(): WorkState {
     },
   ];
 
-  return { boards, cards, labels, members, activeTimer: null };
+  return { boards, boardLists: [], cards, members, activeTimer: null };
 }
 
 export function newBoardId(): string {

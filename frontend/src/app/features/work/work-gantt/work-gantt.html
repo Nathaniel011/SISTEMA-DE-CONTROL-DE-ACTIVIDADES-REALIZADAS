@@ -6,10 +6,10 @@
     </div>
     <div class="flex items-center gap-3">
       <p-select
-        [options]="projectOptions()"
-        [ngModel]="selectedProjectId()"
-        (ngModelChange)="onProjectChange($event)"
-        placeholder="Proyecto"
+        [options]="boardOptions()"
+        [ngModel]="selectedBoardId()"
+        (ngModelChange)="onBoardChange($event)"
+        placeholder="Tablero"
         optionLabel="label"
         optionValue="value"
         class="w-56"
@@ -25,7 +25,7 @@
   } @else if (!timelineTasks().length) {
     <div class="yt-placeholder">
       <i class="pi pi-calendar yt-placeholder-icon"></i>
-      <p class="text-surface-500 m-0">No hay incidencias con fechas en este proyecto.</p>
+      <p class="text-surface-500 m-0">No hay incidencias con fechas en este tablero.</p>
     </div>
   } @else {
     <div class="gantt-panel border border-surface-200 rounded-xl overflow-hidden bg-surface-0">

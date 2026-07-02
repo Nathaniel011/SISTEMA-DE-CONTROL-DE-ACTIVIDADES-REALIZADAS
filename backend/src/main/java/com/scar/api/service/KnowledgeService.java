@@ -26,33 +26,51 @@ public class KnowledgeService {
     private final KnowledgeArticleRepository articleRepository;
     private final ProjectRepository projectRepository;
     private final UserRepository userRepository;
+    private final PermissionService permissionService;
 
     public KnowledgeService(
         KnowledgeArticleRepository articleRepository,
         ProjectRepository projectRepository,
-        UserRepository userRepository
+        UserRepository userRepository,
+        PermissionService permissionService
     ) {
         this.articleRepository = articleRepository;
         this.projectRepository = projectRepository;
         this.userRepository = userRepository;
+        this.permissionService = permissionService;
     }
 
     @Transactional(readOnly = true)
     public List<KnowledgeArticleDto> list(ScarPrincipal principal, UUID projectId, String query) {
+        User currentUser = loadCurrentUser(principal);
+        if (projectId != null) {
+            Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Proyecto no encontrado"));
+            permissionService.requireAccessProject(currentUser, project);
+        }
         String normalized = query == null || query.isBlank() ? null : query.trim();
-        return articleRepository.search(projectId, normalized).stream().map(this::toDto).toList();
+        return articleRepository.search(projectId, normalized).stream()
+            .filter(article -> canAccessArticle(currentUser, article))
+            .map(this::toDto)
+            .toList();
     }
 
     @Transactional(readOnly = true)
     public KnowledgeArticleDto get(ScarPrincipal principal, UUID id) {
-        return toDto(loadArticle(id));
+        KnowledgeArticle article = loadArticle(id);
+        requireArticleAccess(principal, article);
+        return toDto(article);
     }
 
     @Transactional
     public KnowledgeArticleDto create(ScarPrincipal principal, KnowledgeArticleRequest request) {
-        User author = loadUser(principal.userId());
+        User author = loadCurrentUser(principal);
+        Project project = loadProject(request.projectId());
+        if (project != null) {
+            permissionService.requireAccessProject(author, project);
+        }
         KnowledgeArticle article = new KnowledgeArticle();
-        article.setProject(loadProject(request.projectId()));
+        article.setProject(project);
         article.setTitle(requiredTitle(request.title()));
         article.setSlug(uniqueSlug(request.title()));
         article.setContent(request.content() == null ? "" : request.content());
@@ -66,10 +84,15 @@ public class KnowledgeService {
     @Transactional
     public KnowledgeArticleDto update(ScarPrincipal principal, UUID id, KnowledgeArticleRequest request) {
         KnowledgeArticle article = loadArticle(id);
-        User editor = loadUser(principal.userId());
+        requireArticleAccess(principal, article);
+        User editor = loadCurrentUser(principal);
 
         if (request.projectId() != null) {
-            article.setProject(loadProject(request.projectId()));
+            Project project = loadProject(request.projectId());
+            if (project != null) {
+                permissionService.requireAccessProject(editor, project);
+            }
+            article.setProject(project);
         }
         if (request.title() != null) {
             String nextTitle = requiredTitle(request.title());
@@ -93,7 +116,9 @@ public class KnowledgeService {
 
     @Transactional
     public void delete(ScarPrincipal principal, UUID id) {
-        articleRepository.delete(loadArticle(id));
+        KnowledgeArticle article = loadArticle(id);
+        requireArticleAccess(principal, article);
+        articleRepository.delete(article);
     }
 
     private KnowledgeArticle loadArticle(UUID id) {
@@ -104,6 +129,21 @@ public class KnowledgeService {
     private User loadUser(UUID id) {
         return userRepository.findById(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+    }
+
+    private User loadCurrentUser(ScarPrincipal principal) {
+        return userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+    }
+
+    private void requireArticleAccess(ScarPrincipal principal, KnowledgeArticle article) {
+        if (article.getProject() != null) {
+            permissionService.requireAccessProject(loadCurrentUser(principal), article.getProject());
+        }
+    }
+
+    private boolean canAccessArticle(User user, KnowledgeArticle article) {
+        return article.getProject() == null || permissionService.canAccessProject(user, article.getProject());
     }
 
     private Project loadProject(String projectId) {

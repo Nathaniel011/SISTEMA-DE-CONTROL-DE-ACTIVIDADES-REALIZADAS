@@ -13,6 +13,8 @@ public interface BoardListRepository extends JpaRepository<BoardList, UUID> {
 
     List<BoardList> findByProjectIdAndArchivedFalseOrderBySortOrderAsc(UUID projectId);
 
+    List<BoardList> findByProjectIdInAndArchivedFalseOrderBySortOrderAsc(java.util.Collection<UUID> projectIds);
+
     List<BoardList> findByProjectIdOrderBySortOrderAsc(UUID projectId);
 
     Optional<BoardList> findByIdAndProjectId(UUID id, UUID projectId);

@@ -1,6 +1,8 @@
 package com.scar.api.web;
 
+import com.scar.api.domain.entity.Project;
 import com.scar.api.dto.CreateIssueRequest;
+import com.scar.api.service.GeneralBoardService;
 import com.scar.api.service.WorkService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,13 +17,16 @@ import java.util.UUID;
 public class WebhookController {
 
     private final WorkService workService;
+    private final GeneralBoardService generalBoardService;
     private final String emailWebhookSecret;
 
     public WebhookController(
         WorkService workService,
+        GeneralBoardService generalBoardService,
         @Value("${scar.webhooks.email.secret:}") String emailWebhookSecret
     ) {
         this.workService = workService;
+        this.generalBoardService = generalBoardService;
         this.emailWebhookSecret = emailWebhookSecret;
     }
 
@@ -30,24 +35,23 @@ public class WebhookController {
         @RequestHeader(value = "X-Webhook-Secret", required = false) String secret,
         @Valid @RequestBody EmailTicketRequest request
     ) {
-        if (emailWebhookSecret != null && !emailWebhookSecret.isBlank() && !emailWebhookSecret.equals(secret)) {
+        if (emailWebhookSecret == null || emailWebhookSecret.isBlank()) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body("Webhook no configurado");
+        }
+        if (!emailWebhookSecret.equals(secret)) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid secret");
         }
 
         try {
-            // Find the first project or a default project for email tickets
-            // For now, we'll need to pass the boardId in the request or use a default
-            UUID boardId = request.boardId() != null ? UUID.fromString(request.boardId()) : null;
-            
-            if (boardId == null) {
-                return ResponseEntity.badRequest().body("boardId is required");
-            }
+            Project generalBoard = generalBoardService.ensureGeneralBoardExists();
 
             CreateIssueRequest createReq = new CreateIssueRequest(
-                boardId.toString(),
+                generalBoard.getId().toString(),
                 request.subject(),
-                "task",
                 "registered",
+                null,
+                null,
+                null,
                 request.senderName(),
                 request.senderPhone(),
                 request.senderEmail(),

@@ -2,13 +2,13 @@
   <div class="yt-content-header">
     <div>
       <h1 class="yt-content-title m-0">Pizarras</h1>
-      <p class="text-surface-500 m-0 mt-1">Lienzos colaborativos por proyecto</p>
+      <p class="text-surface-500 m-0 mt-1">Lienzos colaborativos por tablero</p>
     </div>
     <div class="flex items-center gap-2">
       <p-select
-        [options]="projectOptions()"
-        [ngModel]="selectedProjectId()"
-        (ngModelChange)="selectedProjectId.set($event); applyProjectFilter()"
+        [options]="boardOptions()"
+        [ngModel]="selectedBoardId()"
+        (ngModelChange)="selectedBoardId.set($event); applyBoardFilter()"
         optionLabel="label"
         optionValue="value"
         class="w-56"

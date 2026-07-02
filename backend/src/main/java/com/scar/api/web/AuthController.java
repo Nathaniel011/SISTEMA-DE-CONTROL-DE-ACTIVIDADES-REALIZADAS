@@ -1,5 +1,6 @@
 package com.scar.api.web;
 
+import com.scar.api.dto.ChangePasswordRequest;
 import com.scar.api.dto.LoginRequest;
 import com.scar.api.dto.LoginResponse;
 import com.scar.api.security.ScarPrincipal;
@@ -26,5 +27,13 @@ public class AuthController {
     @GetMapping("/me")
     public LoginResponse.UserDto me(@AuthenticationPrincipal ScarPrincipal principal) {
         return authService.me(principal);
+    }
+
+    @PutMapping("/password")
+    public void changePassword(
+        @AuthenticationPrincipal ScarPrincipal principal,
+        @Valid @RequestBody ChangePasswordRequest request
+    ) {
+        authService.changePassword(principal, request);
     }
 }

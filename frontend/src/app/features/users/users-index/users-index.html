@@ -4,7 +4,7 @@
       <p-inputicon class="pi pi-search" />
       <input
         pInputText
-        [ngModel]="store.searchTerm()"
+        [ngModel]="usersService.searchTerm()"
         (ngModelChange)="onSearch($event)"
         placeholder="Buscar por nombre, usuario, email o rol"
         class="w-full"
@@ -13,7 +13,7 @@
   </div>
 
   <div class="hidden md:block">
-    <p-table [value]="store.pagedUsers()" [tableStyle]="{'min-width': '60rem'}">
+    <p-table [value]="usersService.pagedUsers()" [tableStyle]="{'min-width': '60rem'}">
       <ng-template #header>
         <tr>
           <th>
@@ -48,14 +48,14 @@
         <tr>
           <td>
             <div class="font-semibold">{{ user.fullName }}</div>
-            <div class="text-xs text-surface-500">Último acceso: {{ user.lastAccess }}</div>
+            <div class="text-xs text-surface-500">Creado: {{ user.createdAt | date:'short' }}</div>
           </td>
           <td>{{ user.username }}</td>
           <td>{{ user.email }}</td>
           <td>
             <div class="flex flex-wrap gap-2">
               @for (role of user.roles; track role) {
-                <p-tag [value]="role" severity="contrast" />
+                <p-tag [value]="roleLabel(role)" severity="contrast" />
               }
             </div>
           </td>
@@ -80,7 +80,7 @@
   </div>
 
   <div class="grid grid-cols-1 gap-3 md:hidden">
-    @for (user of store.pagedUsers(); track user.id) {
+    @for (user of usersService.pagedUsers(); track user.id) {
       <p-card>
         <ng-template #content>
           <div class="p-4 flex flex-col gap-4">
@@ -94,12 +94,12 @@
 
             <div class="text-sm">
               <div>{{ user.email }}</div>
-              <div class="text-surface-500">Último acceso: {{ user.lastAccess }}</div>
+              <div class="text-surface-500">Creado: {{ user.createdAt | date:'short' }}</div>
             </div>
 
             <div class="flex flex-wrap gap-2">
               @for (role of user.roles; track role) {
-                <p-tag [value]="role" severity="contrast" />
+                <p-tag [value]="roleLabel(role)" severity="contrast" />
               }
             </div>
 
@@ -122,9 +122,9 @@
   </div>
 
   <p-paginator
-    [first]="store.page() * store.rows()"
-    [rows]="store.rows()"
-    [totalRecords]="store.totalRecords()"
+    [first]="usersService.page() * usersService.rows()"
+    [rows]="usersService.rows()"
+    [totalRecords]="usersService.totalRecords()"
     [rowsPerPageOptions]="[25, 50, 100]"
     (onPageChange)="onPageChange($event)"
   />

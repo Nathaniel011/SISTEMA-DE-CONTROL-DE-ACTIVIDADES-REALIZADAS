@@ -19,9 +19,9 @@
           (ngModelChange)="query.set($event); applyFilters()"
         />
         <p-select
-          [options]="projectFilterOptions()"
-          [ngModel]="selectedProjectId()"
-          (ngModelChange)="selectedProjectId.set($event); applyFilters()"
+          [options]="boardFilterOptions()"
+          [ngModel]="selectedBoardId()"
+          (ngModelChange)="selectedBoardId.set($event); applyFilters()"
           optionLabel="label"
           optionValue="value"
           class="w-full"
@@ -69,9 +69,9 @@
           (ngModelChange)="editorTitle.set($event)"
         />
         <p-select
-          [options]="projectEditorOptions()"
-          [ngModel]="editorProjectId()"
-          (ngModelChange)="editorProjectId.set($event)"
+          [options]="boardEditorOptions()"
+          [ngModel]="editorBoardId()"
+          (ngModelChange)="editorBoardId.set($event)"
           optionLabel="label"
           optionValue="value"
           class="w-full"

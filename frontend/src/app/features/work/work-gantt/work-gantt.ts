@@ -46,7 +46,7 @@ export class WorkGantt {
   private workService = inject(WorkService);
   private workApi = inject(WorkApiService);
 
-  selectedProjectId = signal<string | null>(null);
+  selectedBoardId = signal<string | null>(null);
   loading = signal(false);
   gantt = signal<GanttResponse | null>(null);
   rangeStart = signal<Date>(new Date());
@@ -59,7 +59,7 @@ export class WorkGantt {
   private taskPreview = signal<{ taskId: string; start: Date; end: Date } | null>(null);
   private dragState: GanttDragState | null = null;
 
-  projectOptions = computed(() =>
+  boardOptions = computed(() =>
     this.workService.boards().map(b => ({ label: b.name, value: b.id }))
   );
 
@@ -133,16 +133,16 @@ export class WorkGantt {
   constructor() {
     effect(() => {
       const boards = this.workService.boards();
-      const current = this.selectedProjectId();
+      const current = this.selectedBoardId();
       if (!boards.length) {
         return;
       }
-      const projectId = current && boards.some(b => b.id === current) ? current : boards[0].id;
+      const boardId = current && boards.some(b => b.id === current) ? current : boards[0].id;
       untracked(() => {
-        if (projectId !== current) {
-          this.selectedProjectId.set(projectId);
+        if (boardId !== current) {
+          this.selectedBoardId.set(boardId);
         }
-        void this.loadGantt(projectId);
+        void this.loadGantt(boardId);
       });
     });
   }
@@ -151,9 +151,9 @@ export class WorkGantt {
     return WORK_STATUS_LABELS[columnId];
   }
 
-  async onProjectChange(projectId: string): Promise<void> {
-    this.selectedProjectId.set(projectId);
-    await this.loadGantt(projectId);
+  async onBoardChange(boardId: string): Promise<void> {
+    this.selectedBoardId.set(boardId);
+    await this.loadGantt(boardId);
   }
 
   beginTaskEdit(event: PointerEvent, task: TimelineTask, mode: GanttEditMode): void {
@@ -320,7 +320,7 @@ export class WorkGantt {
   }
 
   private async persistTaskDates(taskId: string, start: Date, end: Date): Promise<void> {
-    const projectId = this.selectedProjectId();
+    const boardId = this.selectedBoardId();
     this.savingTaskId.set(taskId);
     try {
       const startDate = this.toIsoDate(start);
@@ -331,11 +331,11 @@ export class WorkGantt {
           ...data,
           tasks: data.tasks.map(task => task.id === taskId ? updated : task),
         } : data);
-        await this.workService.loadFromApi();
+        this.workService.updateCard(taskId, { startDate, endDate, dueDate: endDate });
       } else {
         this.workService.updateCard(taskId, { startDate, endDate, dueDate: endDate });
-        if (projectId) {
-          this.buildLocalGantt(projectId);
+        if (boardId) {
+          this.buildLocalGantt(boardId);
         }
       }
     } finally {

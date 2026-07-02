@@ -5,9 +5,9 @@
 
   <div class="flex flex-col lg:flex-row gap-3 lg:items-center py-4">
     <p-select
-      [options]="projectOptions()"
-      [ngModel]="selectedProjectId()"
-      (ngModelChange)="selectedProjectId.set($event)"
+      [options]="boardOptions()"
+      [ngModel]="selectedBoardId()"
+      (ngModelChange)="selectedBoardId.set($event)"
       optionLabel="label"
       optionValue="value"
       class="w-full lg:w-72"

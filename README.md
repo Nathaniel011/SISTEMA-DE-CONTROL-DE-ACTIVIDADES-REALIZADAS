@@ -72,22 +72,3 @@ Abre **pgAdmin** y conecta con:
 | Contraseña | `60465524` |
 
 Para importar el servidor preconfigurado: en pgAdmin ve a **Tools → Import/Export Servers** e importa `dev/pgadmin-servers.json`.
-
-## Credenciales de la aplicación
-
-| Campo | Valor |
-|-------|-------|
-| Usuario admin | `pcondori` |
-| Contraseña | `admin123` |
-
-## Variables de entorno (`dev/local.env`)
-
-| Variable | Descripción | Valor por defecto |
-|----------|-------------|-------------------|
-| `DB_HOST` | Host PostgreSQL | `localhost` |
-| `DB_PORT` | Puerto | `5432` |
-| `DB_NAME` | Base de datos | `scar` |
-| `DB_USER` | Usuario de la app | `scar` |
-| `DB_PASSWORD` | Contraseña de la app | `60465524` |
-| `DB_ADMIN_USER` | Superusuario para auto-crear la base | `postgres` |
-| `DB_ADMIN_PASSWORD` | Contraseña del superusuario | *(obligatoria la 1.ª vez)* |

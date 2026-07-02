@@ -1,24 +1,24 @@
 import {HttpClient} from '@angular/common/http';
 import {inject, Injectable} from '@angular/core';
-import {Observable} from 'rxjs';
+import {map, Observable} from 'rxjs';
 import {environment} from '../../../environments/environment';
 import {
   WorkActiveTimer,
   WorkBoard,
+  WorkBoardList,
   WorkCard,
   WorkColumnId,
   WorkComment,
-  WorkIssueType,
-  WorkLabel,
   WorkMember,
   WorkPriority,
   WorkTimeEntry,
+  WorkAttachment,
 } from '../../features/work/work.models';
 
 export interface WorkBootstrapResponse {
   boards: WorkBoard[];
+  boardLists: WorkBoardList[];
   cards: WorkCard[];
-  labels: WorkLabel[];
   members: WorkMember[];
   activeTimer: WorkActiveTimer | null;
 }
@@ -88,16 +88,39 @@ export interface WhiteboardPayload {
   contentJson?: string;
 }
 
+export interface FileUploadResponse {
+  id: string;
+  url: string;
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+  createdAt?: string;
+}
+
+export interface TimeEntryWithIssue {
+  id: string;
+  issueId: string;
+  memberId: string;
+  minutes: number;
+  note: string;
+  loggedAt: string;
+}
+
+export interface IssueDetailsResponse {
+  comments: WorkComment[];
+  timeEntries: WorkTimeEntry[];
+  attachments: WorkAttachment[];
+}
+
 export interface UpdateIssuePayload {
   title?: string;
   description?: string;
-  type?: WorkIssueType;
   columnId?: WorkColumnId;
+  boardListId?: string | null;
   priority?: WorkPriority;
   assigneeId?: string | null;
   dueDate?: string | null;
   estimateMinutes?: number | null;
-  labelIds?: string[];
   requesterName?: string;
   requesterPhone?: string;
   requesterEmail?: string;
@@ -115,11 +138,21 @@ export class WorkApiService {
     return this.http.get<WorkBootstrapResponse>(`${this.base}/api/work/bootstrap`);
   }
 
+  getIssueDetails(issueId: string): Observable<IssueDetailsResponse> {
+    return this.http.get<IssueDetailsResponse>(`${this.base}/api/issues/${issueId}/details`);
+  }
+
   createIssue(payload: {
     boardId: string;
     title: string;
-    type?: WorkIssueType;
     columnId?: WorkColumnId;
+    boardListId?: string;
+    parentIssueId?: string;
+    assigneeId?: string;
+    requesterName?: string;
+    requesterPhone?: string;
+    requesterEmail?: string;
+    receptionChannel?: string;
   }): Observable<WorkCard> {
     return this.http.post<WorkCard>(`${this.base}/api/issues`, payload);
   }
@@ -128,15 +161,17 @@ export class WorkApiService {
     return this.http.put<WorkCard>(`${this.base}/api/issues/${id}`, payload);
   }
 
-  moveIssue(id: string, columnId: WorkColumnId, targetIndex?: number, targetBoardId?: string): Observable<WorkCard> {
-    const payload: any = { columnId };
-    if (targetIndex !== undefined && targetIndex !== null) payload.targetIndex = targetIndex;
-    if (targetBoardId) payload.targetBoardId = targetBoardId;
-    return this.http.patch<WorkCard>(`${this.base}/api/issues/${id}/move`, payload);
+  moveIssue(
+    id: string,
+    options: { columnId?: WorkColumnId; boardListId?: string; targetIndex?: number; targetBoardId?: string }
+  ): Observable<WorkCard> {
+    return this.http.patch<WorkCard>(`${this.base}/api/issues/${id}/move`, options);
   }
 
   deleteIssue(id: string): Observable<void> {
-    return this.http.delete<void>(`${this.base}/api/issues/${id}`);
+    return this.http
+      .delete(`${this.base}/api/issues/${id}`, { responseType: 'text' })
+      .pipe(map(() => undefined));
   }
 
   addComment(issueId: string, text: string): Observable<WorkComment> {
@@ -153,6 +188,10 @@ export class WorkApiService {
 
   stopTimer(): Observable<WorkTimeEntry> {
     return this.http.post<WorkTimeEntry>(`${this.base}/api/time/timer/stop`, {});
+  }
+
+  listTimeEntries(): Observable<TimeEntryWithIssue[]> {
+    return this.http.get<TimeEntryWithIssue[]>(`${this.base}/api/time/entries`);
   }
 
   gantt(projectId: string): Observable<GanttResponse> {
@@ -223,22 +262,46 @@ export class WorkApiService {
     return `${this.base}/api/whiteboards/${id}/events?access_token=${encodeURIComponent(token)}`;
   }
 
-  uploadFile(file: File, issueId: string): Observable<any> {
+  uploadFile(file: File, issueId: string): Observable<FileUploadResponse> {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('issueId', issueId);
-    return this.http.post<any>(`${this.base}/api/files/upload`, formData);
+    return this.http.post<FileUploadResponse>(`${this.base}/api/files/upload`, formData);
   }
 
   deleteFile(fileId: string): Observable<void> {
     return this.http.delete<void>(`${this.base}/api/files/${fileId}`);
   }
 
-  createProject(payload: { name: string; description?: string }): Observable<any> {
-    return this.http.post<any>(`${this.base}/api/projects`, payload);
+  createBoard(payload: { name: string; description?: string; type?: string; parentBoardId?: string | null }): Observable<WorkBoard> {
+    return this.http.post<WorkBoard>(`${this.base}/api/projects`, payload);
   }
 
-  updateProjectMembers(projectId: string, actions: { userId: string; action: string }[]): Observable<any> {
-    return this.http.patch<any>(`${this.base}/api/projects/${projectId}/members`, { actions });
+  deleteBoard(boardId: string): Observable<void> {
+    return this.http.delete<void>(`${this.base}/api/projects/${boardId}`);
+  }
+
+  getBoardLists(boardId: string): Observable<WorkBoardList[]> {
+    return this.http.get<WorkBoardList[]>(`${this.base}/api/projects/${boardId}/lists`);
+  }
+
+  createBoardList(boardId: string, payload: { name: string; sortOrder: number }): Observable<WorkBoardList> {
+    return this.http.post<WorkBoardList>(`${this.base}/api/projects/${boardId}/lists`, payload);
+  }
+
+  updateBoardList(
+    boardId: string,
+    listId: string,
+    payload: { name: string; sortOrder: number; archived?: boolean }
+  ): Observable<WorkBoardList> {
+    return this.http.put<WorkBoardList>(`${this.base}/api/projects/${boardId}/lists/${listId}`, payload);
+  }
+
+  deleteBoardList(boardId: string, listId: string): Observable<void> {
+    return this.http.delete<void>(`${this.base}/api/projects/${boardId}/lists/${listId}`);
+  }
+
+  updateBoardMembers(boardId: string, actions: { userId: string; action: string }[]): Observable<any> {
+    return this.http.patch<any>(`${this.base}/api/projects/${boardId}/members`, { actions });
   }
 }

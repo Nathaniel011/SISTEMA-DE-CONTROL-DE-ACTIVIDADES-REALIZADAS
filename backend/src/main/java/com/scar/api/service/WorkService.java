@@ -1,10 +1,12 @@
 package com.scar.api.service;
 
+import com.scar.api.domain.BoardListStandard;
 import com.scar.api.domain.entity.*;
 import com.scar.api.domain.enums.*;
 import com.scar.api.dto.*;
 import com.scar.api.repository.*;
 import com.scar.api.security.ScarPrincipal;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -13,6 +15,8 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -26,7 +30,6 @@ public class WorkService {
 
     private final ProjectRepository projectRepository;
     private final IssueRepository issueRepository;
-    private final LabelRepository labelRepository;
     private final UserRepository userRepository;
     private final IssueCommentRepository commentRepository;
     private final TimeEntryRepository timeEntryRepository;
@@ -34,22 +37,29 @@ public class WorkService {
     private final IssueDependencyRepository dependencyRepository;
     private final NotificationService notificationService;
     private final AttachmentRepository attachmentRepository;
+    private final BoardListRepository boardListRepository;
+    private final PermissionService permissionService;
+    private final GeneralBoardService generalBoardService;
+
+    @Value("${scar.upload.dir:./uploads}")
+    private String uploadDir;
 
     public WorkService(
         ProjectRepository projectRepository,
         IssueRepository issueRepository,
-        LabelRepository labelRepository,
         UserRepository userRepository,
         IssueCommentRepository commentRepository,
         TimeEntryRepository timeEntryRepository,
         ActiveTimerRepository activeTimerRepository,
         IssueDependencyRepository dependencyRepository,
         NotificationService notificationService,
-        AttachmentRepository attachmentRepository
+        AttachmentRepository attachmentRepository,
+        BoardListRepository boardListRepository,
+        PermissionService permissionService,
+        GeneralBoardService generalBoardService
     ) {
         this.projectRepository = projectRepository;
         this.issueRepository = issueRepository;
-        this.labelRepository = labelRepository;
         this.userRepository = userRepository;
         this.commentRepository = commentRepository;
         this.timeEntryRepository = timeEntryRepository;
@@ -57,16 +67,30 @@ public class WorkService {
         this.dependencyRepository = dependencyRepository;
         this.notificationService = notificationService;
         this.attachmentRepository = attachmentRepository;
+        this.boardListRepository = boardListRepository;
+        this.permissionService = permissionService;
+        this.generalBoardService = generalBoardService;
     }
 
     @Transactional(readOnly = true)
     public WorkBootstrapDto bootstrap(ScarPrincipal principal) {
+        User currentUser = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+
         List<User> members = userRepository.findByActiveTrue();
-        List<Project> projects = projectRepository.findAllWithMembers();
-        List<Label> labels = labelRepository.findAll();
-        List<Issue> issues = issueRepository.findAll();
+        List<Project> allProjects = projectRepository.findAllWithMembers();
+        List<Project> projects = allProjects.stream()
+            .filter(p -> permissionService.canAccessProject(currentUser, p))
+            .toList();
+        Set<UUID> accessibleProjectIds = projects.stream().map(Project::getId).collect(Collectors.toSet());
+
+        List<Issue> issues = accessibleProjectIds.isEmpty()
+            ? List.of()
+            : issueRepository.findByProjectIdIn(accessibleProjectIds);
+        List<BoardList> boardLists = boardListRepository
+            .findByProjectIdInAndArchivedFalseOrderBySortOrderAsc(accessibleProjectIds);
+
         Map<UUID, List<IssueComment>> commentsByIssue = loadComments(issues);
-        Map<UUID, List<TimeEntry>> timeByIssue = loadTimeEntries(issues);
 
         WorkBootstrapDto.ActiveTimerDto timerDto = activeTimerRepository.findById(principal.userId())
             .map(t -> new WorkBootstrapDto.ActiveTimerDto(
@@ -78,43 +102,139 @@ public class WorkService {
 
         return new WorkBootstrapDto(
             projects.stream().map(this::toBoard).toList(),
-            issues.stream().map(i -> toCard(i, commentsByIssue, timeByIssue)).toList(),
-            labels.stream().map(this::toLabel).toList(),
+            boardLists.stream().map(this::toBoardListDto).toList(),
+            issues.stream().map(i -> toCardSummary(i, commentsByIssue)).toList(),
             members.stream().map(this::toMember).toList(),
             timerDto
         );
     }
 
+    @Transactional(readOnly = true)
+    public List<TimeEntryWithIssueDto> listTimeEntries(ScarPrincipal principal) {
+        User currentUser = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+        Set<UUID> accessibleProjectIds = projectRepository.findAllWithMembers().stream()
+            .filter(project -> permissionService.canAccessProject(currentUser, project))
+            .map(Project::getId)
+            .collect(Collectors.toSet());
+
+        if (accessibleProjectIds.isEmpty()) {
+            return List.of();
+        }
+        return timeEntryRepository.findByProjectIdIn(accessibleProjectIds).stream()
+            .map(entry -> new TimeEntryWithIssueDto(
+                entry.getId().toString(),
+                entry.getIssue().getId().toString(),
+                entry.getUser().getId().toString(),
+                entry.getMinutes(),
+                entry.getNote(),
+                entry.getLoggedAt().toString()
+            ))
+            .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public IssueDetailsDto getIssueDetails(ScarPrincipal principal, UUID issueId) {
+        User currentUser = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+        Issue issue = loadIssue(issueId);
+        permissionService.requireAccessProject(currentUser, issue.getProject());
+        return new IssueDetailsDto(
+            mapComments(commentRepository.findByIssueIdOrderByCreatedAtAsc(issueId)),
+            mapTimeEntries(timeEntryRepository.findByIssueIdOrderByLoggedAtDesc(issueId)),
+            mapAttachments(attachmentRepository.findByIssueIdOrderByCreatedAtDesc(issueId))
+        );
+    }
+
     @Transactional
     public WorkBootstrapDto.CardDto createIssue(ScarPrincipal principal, CreateIssueRequest req) {
-        Project project = projectRepository.findById(UUID.fromString(req.boardId()))
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Proyecto no encontrado"));
+        User currentUser = principal != null
+            ? userRepository.findByIdWithRoles(principal.userId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"))
+            : null;
 
-        int nextNum = issueRepository.findTopByProjectIdOrderByIssueNumberDesc(project.getId())
-            .map(i -> i.getIssueNumber() + 1).orElse(1);
         IssueColumn column = req.columnId() != null
             ? IssueColumn.valueOf(req.columnId())
             : IssueColumn.todo;
-        IssueType type = req.type() != null ? IssueType.valueOf(req.type()) : IssueType.task;
+        boolean incoming = isIncomingRequest(req, column);
+        Project project;
+
+        if (incoming) {
+            project = generalBoardService.ensureGeneralBoardExists();
+            column = IssueColumn.registered;
+        } else {
+            project = projectRepository.findById(UUID.fromString(req.boardId()))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Proyecto no encontrado"));
+        }
+
+        if (currentUser != null) {
+            permissionService.requireCreateIssue(currentUser, project);
+        }
+
+        int nextNum = issueRepository.findTopByProjectIdOrderByIssueNumberDesc(project.getId())
+            .map(i -> i.getIssueNumber() + 1).orElse(1);
 
         Issue issue = new Issue();
         issue.setProject(project);
         issue.setIssueNumber(nextNum);
-        issue.setType(type);
         issue.setColumnId(column);
         issue.setTitle(req.title().trim());
-        issue.setSortOrder(nextIssueOrder(project.getId(), column));
-        if (principal != null) {
-            userRepository.findById(principal.userId()).ifPresent(issue::setAssignee);
+        issue.setCreatedBy(currentUser);
+
+        User assignee = null;
+        if (req.assigneeId() != null && !req.assigneeId().isBlank()) {
+            if (!permissionService.canAssignTasks(currentUser)) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No puede asignar tareas a otras personas");
+            }
+            assignee = userRepository.findByIdWithRoles(UUID.fromString(req.assigneeId()))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Responsable no encontrado"));
+            permissionService.requireValidAssignee(currentUser, assignee);
+        } else if (currentUser != null && permissionService.isStaff(currentUser)
+            && !permissionService.isAdminOrChief(currentUser)
+            && !permissionService.isSecretary(currentUser)) {
+            assignee = currentUser;
         }
-        
+
+        boolean explicitList = req.boardListId() != null && !req.boardListId().isBlank();
+        if (!incoming && !explicitList) {
+            column = assignee != null ? IssueColumn.in_assignment : IssueColumn.todo;
+            issue.setColumnId(column);
+        }
+
+        BoardList targetList = resolveBoardList(project.getId(), req.boardListId(), column);
+        if (incoming && targetList == null) {
+            targetList = generalBoardService.findReceivedList(project).orElse(null);
+        }
+        if (targetList != null) {
+            issue.setBoardList(targetList);
+            issue.setSortOrder(nextIssueListOrder(project.getId(), targetList.getId()));
+            column = mapColumnFromList(targetList);
+            issue.setColumnId(column);
+        } else {
+            issue.setSortOrder(nextIssueOrder(project.getId(), column));
+        }
+
+        if (req.parentIssueId() != null && !req.parentIssueId().isBlank()) {
+            Issue parent = loadIssue(UUID.fromString(req.parentIssueId()));
+            permissionService.requireAccessProject(currentUser, parent.getProject());
+            issue.setParentIssue(parent);
+            if (issue.getBoardList() == null && parent.getBoardList() != null) {
+                issue.setBoardList(parent.getBoardList());
+            }
+        }
+
+        if (assignee != null) {
+            issue.setAssignee(assignee);
+            issue.setAssignedAt(Instant.now());
+        }
+
         if (req.requesterName() != null) issue.setRequesterName(req.requesterName().trim());
         if (req.requesterPhone() != null) issue.setRequesterPhone(req.requesterPhone().trim());
         if (req.requesterEmail() != null) issue.setRequesterEmail(req.requesterEmail().trim());
         if (req.receptionChannel() != null) issue.setReceptionChannel(req.receptionChannel().trim());
 
         issue = issueRepository.save(issue);
-        return toCard(issue, Map.of(), Map.of());
+        return toCard(issue);
     }
 
     @Transactional
@@ -122,42 +242,58 @@ public class WorkService {
         Issue issue = loadIssue(issueId);
         issue.setDescription(description);
         issue = issueRepository.save(issue);
-        return toCard(issue, loadComments(List.of(issue)), loadTimeEntries(List.of(issue)));
+        return toCard(issue);
     }
 
     @Transactional
     public WorkBootstrapDto.CardDto updateIssue(ScarPrincipal principal, UUID issueId, UpdateIssueRequest req) {
+        User currentUser = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         Issue issue = loadIssue(issueId);
+        permissionService.requireAccessProject(currentUser, issue.getProject());
+        permissionService.requireUpdateIssue(currentUser, issue, req.assigneeId());
         IssueColumn oldColumn = issue.getColumnId();
 
         if (req.title() != null) issue.setTitle(req.title().trim());
         if (req.description() != null) issue.setDescription(req.description());
-        if (req.type() != null) issue.setType(IssueType.valueOf(req.type()));
         if (req.columnId() != null) issue.setColumnId(IssueColumn.valueOf(req.columnId()));
+        if (req.boardListId() != null && !req.boardListId().isBlank()) {
+            BoardList list = boardListRepository.findByIdAndProjectId(
+                UUID.fromString(req.boardListId()), issue.getProject().getId()
+            ).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Lista no encontrada"));
+            issue.setBoardList(list);
+            issue.setColumnId(mapColumnFromList(list));
+            applyCompletionFromList(issue, list, oldColumn);
+        }
         if (req.priority() != null) issue.setPriority(IssuePriority.valueOf(req.priority()));
         if (req.assigneeId() != null) {
+            if (!req.assigneeId().isBlank() && !permissionService.canAssignTasks(currentUser)) {
+                UUID assigneeId = UUID.fromString(req.assigneeId());
+                UUID currentId = issue.getAssignee() != null ? issue.getAssignee().getId() : null;
+                if (!assigneeId.equals(currentUser.getId()) && !assigneeId.equals(currentId)) {
+                    throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No puede asignar tareas a otras personas");
+                }
+            }
             UUID assigneeId = req.assigneeId().isBlank() ? null : UUID.fromString(req.assigneeId());
-            User newAssignee = assigneeId == null ? null : userRepository.findById(assigneeId).orElse(null);
+            User newAssignee = assigneeId == null ? null : userRepository.findByIdWithRoles(assigneeId).orElse(null);
+            if (newAssignee != null) {
+                permissionService.requireValidAssignee(currentUser, newAssignee);
+            }
             User oldAssignee = issue.getAssignee();
-            
+
             issue.setAssignee(newAssignee);
-            
-            // Set assignedAt when assigning to a user for the first time
-            if (newAssignee != null && oldAssignee == null && issue.getAssignedAt() == null) {
+
+            if (newAssignee != null && (oldAssignee == null || !oldAssignee.getId().equals(newAssignee.getId()))) {
                 issue.setAssignedAt(Instant.now());
+            }
+            if (newAssignee == null) {
+                issue.setAssignedAt(null);
             }
         }
         if (req.dueDate() != null) {
             issue.setDueDate(req.dueDate().isBlank() ? null : LocalDate.parse(req.dueDate()));
         }
         if (req.estimateMinutes() != null) issue.setEstimateMinutes(req.estimateMinutes());
-        if (req.labelIds() != null) {
-            Set<Label> labels = req.labelIds().stream()
-                .map(id -> labelRepository.findById(UUID.fromString(id)).orElseThrow())
-                .collect(Collectors.toSet());
-            issue.getLabels().clear();
-            issue.getLabels().addAll(labels);
-        }
         if (req.requesterName() != null) issue.setRequesterName(req.requesterName().trim());
         if (req.requesterPhone() != null) issue.setRequesterPhone(req.requesterPhone().trim());
         if (req.requesterEmail() != null) issue.setRequesterEmail(req.requesterEmail().trim());
@@ -178,93 +314,134 @@ public class WorkService {
             notificationService.notifyAssignment(issue, principal.userId());
         }
 
-        return toCard(issue, loadComments(List.of(issue)), loadTimeEntries(List.of(issue)));
+        return toCardLight(issue);
     }
 
     @Transactional
     public WorkBootstrapDto.CardDto moveIssue(ScarPrincipal principal, UUID issueId, MoveIssueRequest req) {
-        Issue issue = loadIssue(issueId);
-        IssueColumn oldColumn = issue.getColumnId();
-        IssueColumn newColumn = IssueColumn.valueOf(req.columnId());
-
-        // Role-based permission checks
-        User user = userRepository.findById(principal.userId())
+        User user = userRepository.findByIdWithRoles(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
-        
-        Set<UserRole> roles = user.getRoles();
-        
-        // SECRETARY can only move between REGISTERED, IN_ASSIGNMENT and TODO
-        if (roles.contains(UserRole.SECRETARY) && !roles.contains(UserRole.ADMIN) && !roles.contains(UserRole.CHIEF)) {
-            if (newColumn != IssueColumn.registered && newColumn != IssueColumn.in_assignment && newColumn != IssueColumn.todo) {
-                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "La Secretaría solo puede mover incidencias entre Registrada, En Asignación y Pendiente");
-            }
+        Issue issue = loadIssue(issueId);
+        permissionService.requireAccessProject(user, issue.getProject());
+
+        IssueColumn oldColumn = issue.getColumnId();
+        BoardList oldList = issue.getBoardList();
+        IssueColumn newColumn = oldColumn;
+        BoardList newList = oldList;
+
+        boolean crossBoard = req.targetBoardId() != null && !req.targetBoardId().isBlank()
+            && !issue.getProject().getId().toString().equals(req.targetBoardId());
+
+        if (req.boardListId() != null && !req.boardListId().isBlank()) {
+            UUID listProjectId = crossBoard
+                ? UUID.fromString(req.targetBoardId())
+                : issue.getProject().getId();
+            newList = boardListRepository.findByIdAndProjectId(
+                UUID.fromString(req.boardListId()),
+                listProjectId
+            ).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Lista no encontrada"));
+            newColumn = mapColumnFromList(newList);
+        } else if (req.columnId() != null && !req.columnId().isBlank()) {
+            newColumn = IssueColumn.valueOf(req.columnId());
+        } else {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Debe indicar columna o lista destino");
         }
 
-        // Cross-board move support
-        if (req.targetBoardId() != null && !req.targetBoardId().isBlank() && !issue.getProject().getId().toString().equals(req.targetBoardId())) {
+        permissionService.requireMoveIssue(user, issue, newColumn);
+
+        if (crossBoard) {
             UUID targetProjId = UUID.fromString(req.targetBoardId());
             Project dest = projectRepository.findById(targetProjId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Proyecto destino no encontrado"));
+            permissionService.requireAccessProject(user, dest);
 
-            // assign new project and a fresh issue number in destination
             int nextNum = issueRepository.findTopByProjectIdOrderByIssueNumberDesc(dest.getId())
                 .map(i -> i.getIssueNumber() + 1).orElse(1);
+
+            BoardList targetList = resolveBoardList(dest.getId(), req.boardListId(), newColumn);
+            if (targetList != null) {
+                newList = targetList;
+                newColumn = mapColumnFromList(targetList);
+            }
 
             issue.setProject(dest);
             issue.setIssueNumber(nextNum);
             issue.setColumnId(newColumn);
-            issue.setSortOrder(req.targetIndex() != null ? req.targetIndex() : nextIssueOrder(dest.getId(), newColumn));
-            
-            // Set completedAt when moving to DONE or CLOSED
-            if ((newColumn == IssueColumn.done || newColumn == IssueColumn.closed) 
-                && (oldColumn != IssueColumn.done && oldColumn != IssueColumn.closed)) {
-                issue.setCompletedAt(Instant.now());
-            }
-            
+            issue.setBoardList(newList);
+            issue.setSortOrder(req.targetIndex() != null ? req.targetIndex()
+                : (newList != null
+                    ? nextIssueListOrder(dest.getId(), newList.getId())
+                    : nextIssueOrder(dest.getId(), newColumn)));
+            applyCompletionState(issue, oldColumn, newColumn, oldList, newList);
             issue = issueRepository.save(issue);
 
             if (!oldColumn.equals(newColumn)) {
                 notificationService.notifyStatusChange(issue, principal.userId(), oldColumn.name(), newColumn.name());
             }
-
-            return toCard(issue, loadComments(List.of(issue)), loadTimeEntries(List.of(issue)));
+            return toCardLight(issue);
         }
 
-        // Same-project move
         issue.setColumnId(newColumn);
-        issue.setSortOrder(req.targetIndex() != null ? req.targetIndex() : nextIssueOrder(issue.getProject().getId(), newColumn));
-        
-        // Set completedAt when moving to DONE or CLOSED
-        if ((newColumn == IssueColumn.done || newColumn == IssueColumn.closed) 
-            && (oldColumn != IssueColumn.done && oldColumn != IssueColumn.closed)) {
-            issue.setCompletedAt(Instant.now());
+        if (newList != null) {
+            issue.setBoardList(newList);
+            issue.setSortOrder(req.targetIndex() != null ? req.targetIndex() : nextIssueListOrder(issue.getProject().getId(), newList.getId()));
+        } else {
+            issue.setSortOrder(req.targetIndex() != null ? req.targetIndex() : nextIssueOrder(issue.getProject().getId(), newColumn));
         }
-        
-        // Reset completedAt when moving away from DONE or CLOSED
-        if ((oldColumn == IssueColumn.done || oldColumn == IssueColumn.closed) 
-            && (newColumn != IssueColumn.done && newColumn != IssueColumn.closed)) {
-            issue.setCompletedAt(null);
-        }
-        
+
+        applyCompletionState(issue, oldColumn, newColumn, oldList, newList);
         issue = issueRepository.save(issue);
 
         if (!oldColumn.equals(newColumn)) {
             notificationService.notifyStatusChange(issue, principal.userId(), oldColumn.name(), newColumn.name());
         }
 
-        return toCard(issue, loadComments(List.of(issue)), loadTimeEntries(List.of(issue)));
+        return toCardLight(issue);
     }
 
     @Transactional
     public void deleteIssue(ScarPrincipal principal, UUID issueId) {
+        User user = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         Issue issue = loadIssue(issueId);
+        permissionService.requireDeleteIssue(user, issue);
+        deleteIssueTree(issue);
+    }
+
+    private void deleteIssueTree(Issue issue) {
+        UUID issueId = issue.getId();
+        for (Issue child : issueRepository.findByParentIssueId(issueId)) {
+            deleteIssueTree(child);
+        }
+        deleteAttachmentFiles(issueId);
+        activeTimerRepository.deleteByIssueId(issueId);
+        commentRepository.deleteByIssueId(issueId);
+        timeEntryRepository.deleteByIssueId(issueId);
+        attachmentRepository.deleteByIssueId(issueId);
+        dependencyRepository.deleteAllForIssue(issueId);
         issueRepository.delete(issue);
+    }
+
+    private void deleteAttachmentFiles(UUID issueId) {
+        for (Attachment attachment : attachmentRepository.findByIssueIdOrderByCreatedAtDesc(issueId)) {
+            try {
+                String fileUrl = attachment.getFileUrl();
+                if (fileUrl != null && fileUrl.startsWith("/api/files/")) {
+                    String filename = fileUrl.substring("/api/files/".length());
+                    Files.deleteIfExists(Paths.get(uploadDir, filename));
+                }
+            } catch (Exception ignored) {
+                // ignorar archivos huérfanos o bloqueados
+            }
+        }
     }
 
     @Transactional
     public WorkBootstrapDto.CommentDto addComment(ScarPrincipal principal, UUID issueId, CommentRequest req) {
+        User author = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         Issue issue = loadIssue(issueId);
-        User author = userRepository.findById(principal.userId()).orElseThrow();
+        permissionService.requireAccessProject(author, issue.getProject());
         IssueComment comment = new IssueComment();
         comment.setIssue(issue);
         comment.setAuthor(author);
@@ -281,8 +458,10 @@ public class WorkService {
 
     @Transactional
     public WorkBootstrapDto.TimeEntryDto logTime(ScarPrincipal principal, UUID issueId, LogTimeRequest req) {
+        User user = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         Issue issue = loadIssue(issueId);
-        User user = userRepository.findById(principal.userId()).orElseThrow();
+        permissionService.requireAccessProject(user, issue.getProject());
         TimeEntry entry = new TimeEntry();
         entry.setIssue(issue);
         entry.setUser(user);
@@ -302,9 +481,11 @@ public class WorkService {
 
     @Transactional
     public WorkBootstrapDto.ActiveTimerDto startTimer(ScarPrincipal principal, TimerStartRequest req) {
+        User user = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         activeTimerRepository.findById(principal.userId()).ifPresent(activeTimerRepository::delete);
         Issue issue = loadIssue(UUID.fromString(req.issueId()));
-        User user = userRepository.findById(principal.userId()).orElseThrow();
+        permissionService.requireAccessProject(user, issue.getProject());
         ActiveTimer timer = new ActiveTimer();
         timer.setUser(user);
         timer.setIssue(issue);
@@ -327,8 +508,11 @@ public class WorkService {
 
     @Transactional(readOnly = true)
     public GanttDto gantt(ScarPrincipal principal, UUID projectId) {
+        User currentUser = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         Project project = projectRepository.findById(projectId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        permissionService.requireAccessProject(currentUser, project);
         List<Issue> issues = issueRepository.findByProjectId(projectId);
         List<IssueDependency> deps = dependencyRepository.findByProjectId(projectId);
 
@@ -350,7 +534,10 @@ public class WorkService {
 
     @Transactional
     public GanttDto.GanttTaskDto updateGanttTaskDates(ScarPrincipal principal, UUID issueId, GanttTaskUpdateRequest req) {
+        User currentUser = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         Issue issue = loadIssue(issueId);
+        permissionService.requireAccessProject(currentUser, issue.getProject());
         LocalDate start = LocalDate.parse(req.start());
         LocalDate end = LocalDate.parse(req.end());
         if (end.isBefore(start)) {
@@ -365,8 +552,12 @@ public class WorkService {
 
     @Transactional
     public GanttDto.GanttLinkDto addDependency(ScarPrincipal principal, UUID issueId, DependencyRequest req) {
+        User currentUser = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         Issue issue = loadIssue(issueId);
+        permissionService.requireAccessProject(currentUser, issue.getProject());
         Issue dependsOn = loadIssue(UUID.fromString(req.dependsOnIssueId()));
+        permissionService.requireAccessProject(currentUser, dependsOn.getProject());
         if (!issue.getProject().getId().equals(dependsOn.getProject().getId())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Las dependencias deben ser del mismo proyecto");
         }
@@ -387,20 +578,35 @@ public class WorkService {
 
     @Transactional
     public void removeDependency(ScarPrincipal principal, UUID dependencyId) {
+        User currentUser = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         IssueDependency dep = dependencyRepository.findById(dependencyId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        permissionService.requireAccessProject(currentUser, dep.getIssue().getProject());
         dependencyRepository.delete(dep);
     }
 
     @Transactional(readOnly = true)
     public ReportsDto getReports(ScarPrincipal principal, UUID projectId, String startDate, String endDate) {
+        User currentUser = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+        Set<UUID> accessibleProjectIds = projectRepository.findAllWithMembers().stream()
+            .filter(project -> permissionService.canAccessProject(currentUser, project))
+            .map(Project::getId)
+            .collect(Collectors.toSet());
+
         LocalDate start = parseReportDate(startDate);
         LocalDate end = parseReportDate(endDate);
         List<Issue> issues;
         if (projectId != null) {
+            Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Proyecto no encontrado"));
+            permissionService.requireAccessProject(currentUser, project);
             issues = issueRepository.findByProjectId(projectId);
+        } else if (accessibleProjectIds.isEmpty()) {
+            issues = List.of();
         } else {
-            issues = issueRepository.findAll();
+            issues = issueRepository.findByProjectIdIn(accessibleProjectIds);
         }
         issues = issues.stream()
             .filter(issue -> issueMatchesReportRange(issue, start, end))
@@ -412,10 +618,14 @@ public class WorkService {
             .filter(i -> i.getPriority() == IssuePriority.critical && i.getColumnId() != IssueColumn.done && i.getColumnId() != IssueColumn.closed)
             .count();
 
-        List<TimeEntry> entries = timeEntryRepository.findAll().stream()
-            .filter(entry -> projectId == null || entry.getIssue().getProject().getId().equals(projectId))
-            .filter(entry -> timeEntryMatchesReportRange(entry, start, end))
-            .toList();
+        Set<UUID> reportProjectIds = projectId != null
+            ? Set.of(projectId)
+            : accessibleProjectIds;
+        List<TimeEntry> entries = reportProjectIds.isEmpty()
+            ? List.of()
+            : timeEntryRepository.findByProjectIdIn(reportProjectIds).stream()
+                .filter(entry -> timeEntryMatchesReportRange(entry, start, end))
+                .toList();
 
         double totalHours = entries.stream()
             .mapToInt(TimeEntry::getMinutes)
@@ -470,17 +680,24 @@ public class WorkService {
 
     @Transactional(readOnly = true)
     public WorkBootstrapDto.CardDto getPublicTracking(String token) {
-        Issue issue = issueRepository.findByPublicToken(UUID.fromString(token))
+        UUID publicToken;
+        try {
+            publicToken = UUID.fromString(token);
+        } catch (IllegalArgumentException ex) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Ticket no encontrado");
+        }
+        Issue issue = issueRepository.findByPublicToken(publicToken)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Ticket no encontrado"));
-        return toCard(issue, loadComments(List.of(issue)), loadTimeEntries(List.of(issue)));
+        return toPublicCard(issue);
     }
 
     @Transactional
     public WorkBootstrapDto.BoardDto createProject(ScarPrincipal principal, CreateProjectRequest request) {
-        // Generate key from name (first 4 letters, uppercase)
+        User creator = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+        permissionService.requireCreateBoard(creator);
+
         String key = request.name().trim().substring(0, Math.min(4, request.name().trim().length())).toUpperCase();
-        
-        // Check if key already exists, append number if needed
         String finalKey = key;
         int counter = 1;
         while (projectRepository.findByKeyCode(finalKey).isPresent()) {
@@ -488,22 +705,63 @@ public class WorkService {
             counter++;
         }
 
+        ProjectType type = ProjectType.STANDARD;
+        if (request.type() != null && !request.type().isBlank()) {
+            type = ProjectType.valueOf(request.type().trim().toUpperCase(Locale.ROOT));
+        }
+
         Project project = new Project();
         project.setName(request.name().trim());
         project.setDescription(request.description() != null ? request.description().trim() : null);
         project.setKeyCode(finalKey);
-        
-        // Add creator as member
-        User creator = userRepository.findById(principal.userId())
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+        project.setType(type);
+
+        if (request.parentBoardId() != null && !request.parentBoardId().isBlank()) {
+            Project parent = projectRepository.findById(UUID.fromString(request.parentBoardId()))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Tablero padre no encontrado"));
+            permissionService.requireAccessProject(creator, parent);
+            project.setParentProject(parent);
+        }
+
         project.getMembers().add(creator);
-        
         project = projectRepository.save(project);
+        createDefaultLists(project);
         return toBoard(project);
     }
 
     @Transactional
-    public WorkBootstrapDto.BoardDto updateProjectMembers(UUID projectId, UpdateProjectMembersRequest request) {
+    public void deleteProject(ScarPrincipal principal, UUID projectId) {
+        User currentUser = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+        permissionService.requireDeleteBoard(currentUser);
+
+        Project project = projectRepository.findById(projectId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Tablero no encontrado"));
+
+        if (project.getType() == ProjectType.GENERAL
+            || GeneralBoardService.GENERAL_BOARD_KEY.equalsIgnoreCase(project.getKeyCode())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No se puede eliminar el tablero general");
+        }
+
+        deleteProjectCascade(projectId);
+    }
+
+    private void deleteProjectCascade(UUID projectId) {
+        for (Project child : projectRepository.findByParentProject_Id(projectId)) {
+            deleteProjectCascade(child.getId());
+        }
+        projectRepository.deleteById(projectId);
+    }
+
+    @Transactional
+    public WorkBootstrapDto.BoardDto updateProjectMembers(ScarPrincipal principal, UUID projectId, UpdateProjectMembersRequest request) {
+        User currentUser = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+        permissionService.requireManageBoardMembers(currentUser);
+        return updateProjectMembersInternal(projectId, request);
+    }
+
+    private WorkBootstrapDto.BoardDto updateProjectMembersInternal(UUID projectId, UpdateProjectMembersRequest request) {
         Project project = projectRepository.findById(projectId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Proyecto no encontrado"));
 
@@ -537,25 +795,186 @@ public class WorkService {
         return issueRepository.findByProjectIdAndColumnIdOrderBySortOrder(projectId, column).size();
     }
 
+    private int nextIssueListOrder(UUID projectId, UUID listId) {
+        return (int) issueRepository.countByProjectIdAndBoardListId(projectId, listId);
+    }
+
+    @Transactional(readOnly = true)
+    public WorkBootstrapDto.BoardDto getGeneralBoard(ScarPrincipal principal) {
+        User currentUser = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+        Project general = generalBoardService.findGeneralBoard()
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Tablero general no configurado"));
+        permissionService.requireAccessProject(currentUser, general);
+        return toBoard(general);
+    }
+
+    private boolean isIncomingRequest(CreateIssueRequest req, IssueColumn column) {
+        if (column == IssueColumn.registered) {
+            return true;
+        }
+        return req.receptionChannel() != null && !req.receptionChannel().isBlank();
+    }
+
+    private void createDefaultLists(Project project) {
+        BoardList list = new BoardList();
+        list.setProject(project);
+        list.setName(BoardListStandard.TASK_LIST_NAME);
+        list.setSortOrder(0);
+        list.setArchived(false);
+        boardListRepository.save(list);
+    }
+
+    private BoardList resolveBoardList(UUID projectId, String boardListId, IssueColumn fallbackColumn) {
+        if (boardListId != null && !boardListId.isBlank()) {
+            return boardListRepository.findByIdAndProjectId(UUID.fromString(boardListId), projectId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Lista no encontrada"));
+        }
+        List<BoardList> lists = boardListRepository.findByProjectIdAndArchivedFalseOrderBySortOrderAsc(projectId);
+        if (lists.isEmpty()) {
+            return null;
+        }
+        String targetName = switch (fallbackColumn) {
+            case done, closed -> BoardListStandard.NAMES.get(3);
+            case in_progress, review -> BoardListStandard.NAMES.get(1);
+            case in_assignment -> BoardListStandard.NAMES.get(0);
+            case registered -> BoardListStandard.NAMES.get(0);
+            default -> BoardListStandard.TASK_LIST_NAME;
+        };
+        return findListByName(lists, targetName)
+            .or(() -> findListByName(lists, BoardListStandard.TASK_LIST_NAME))
+            .orElseGet(() -> switch (fallbackColumn) {
+            case done, closed -> lists.get(lists.size() - 1);
+            case in_progress, review -> lists.get(Math.min(1, lists.size() - 1));
+            default -> lists.get(0);
+        });
+    }
+
+    private Optional<BoardList> findListByName(List<BoardList> lists, String name) {
+        return lists.stream()
+            .filter(list -> list.getName().equalsIgnoreCase(name))
+            .findFirst()
+            .or(() -> lists.stream()
+                .filter(list -> list.getName().toLowerCase(Locale.ROOT).contains(name.toLowerCase(Locale.ROOT)))
+                .findFirst());
+    }
+
+    private IssueColumn mapColumnFromList(BoardList list) {
+        if (isDoneList(list)) {
+            return IssueColumn.done;
+        }
+        String name = list.getName().toLowerCase(Locale.ROOT);
+        if (name.contains("progreso") || name.contains("curso") || name.contains("proceso")) {
+            return IssueColumn.in_progress;
+        }
+        if (name.contains("revis")) {
+            return IssueColumn.review;
+        }
+        if (name.contains("pendient")) {
+            return IssueColumn.todo;
+        }
+        if (name.contains("asign")) {
+            return IssueColumn.in_assignment;
+        }
+        if (name.contains("tarea")) {
+            return IssueColumn.todo;
+        }
+        if (name.contains("registr")) {
+            return IssueColumn.registered;
+        }
+        return IssueColumn.todo;
+    }
+
+    private boolean isDoneList(BoardList list) {
+        if (list == null) {
+            return false;
+        }
+        String name = list.getName().toLowerCase(Locale.ROOT);
+        return name.contains("hecho") || name.contains("cerrad") || name.contains("finaliz")
+            || name.contains("archivad") || name.contains("completad");
+    }
+
+    private void applyCompletionFromList(Issue issue, BoardList list, IssueColumn oldColumn) {
+        if (isDoneList(list)) {
+            if (issue.getCompletedAt() == null) {
+                issue.setCompletedAt(Instant.now());
+            }
+            issue.setColumnId(IssueColumn.done);
+        } else if (oldColumn == IssueColumn.done || oldColumn == IssueColumn.closed) {
+            issue.setCompletedAt(null);
+        }
+    }
+
+    private void applyCompletionState(
+        Issue issue,
+        IssueColumn oldColumn,
+        IssueColumn newColumn,
+        BoardList oldList,
+        BoardList newList
+    ) {
+        boolean wasDone = oldColumn == IssueColumn.done || oldColumn == IssueColumn.closed || isDoneList(oldList);
+        boolean nowDone = newColumn == IssueColumn.done || newColumn == IssueColumn.closed || isDoneList(newList);
+        if (nowDone && !wasDone) {
+            issue.setCompletedAt(Instant.now());
+        } else if (wasDone && !nowDone) {
+            issue.setCompletedAt(null);
+        }
+    }
+
+    private BoardListDto toBoardListDto(BoardList list) {
+        return new BoardListDto(
+            list.getId(),
+            list.getProject().getId(),
+            list.getName(),
+            list.getSortOrder(),
+            list.isArchived(),
+            list.getCreatedAt(),
+            list.getUpdatedAt()
+        );
+    }
+
     private Issue loadIssue(UUID id) {
         return issueRepository.findById(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Incidencia no encontrada"));
     }
 
     private Map<UUID, List<IssueComment>> loadComments(List<Issue> issues) {
-        Map<UUID, List<IssueComment>> map = new HashMap<>();
-        for (Issue issue : issues) {
-            map.put(issue.getId(), commentRepository.findByIssueIdOrderByCreatedAtAsc(issue.getId()));
+        if (issues.isEmpty()) {
+            return Map.of();
         }
-        return map;
+        Set<UUID> issueIds = issues.stream().map(Issue::getId).collect(Collectors.toSet());
+        return commentRepository.findByIssueIdInOrderByCreatedAtAsc(issueIds).stream()
+            .collect(Collectors.groupingBy(comment -> comment.getIssue().getId()));
     }
 
-    private Map<UUID, List<TimeEntry>> loadTimeEntries(List<Issue> issues) {
-        Map<UUID, List<TimeEntry>> map = new HashMap<>();
-        for (Issue issue : issues) {
-            map.put(issue.getId(), timeEntryRepository.findByIssueIdOrderByLoggedAtDesc(issue.getId()));
-        }
-        return map;
+    private List<WorkBootstrapDto.CommentDto> mapComments(List<IssueComment> comments) {
+        return comments.stream().map(c -> new WorkBootstrapDto.CommentDto(
+            c.getId().toString(),
+            c.getAuthor().getId().toString(),
+            c.getText(),
+            c.getCreatedAt().toString()
+        )).toList();
+    }
+
+    private List<WorkBootstrapDto.TimeEntryDto> mapTimeEntries(List<TimeEntry> entries) {
+        return entries.stream().map(t -> new WorkBootstrapDto.TimeEntryDto(
+            t.getId().toString(),
+            t.getUser().getId().toString(),
+            t.getMinutes(),
+            t.getNote(),
+            t.getLoggedAt().toString()
+        )).toList();
+    }
+
+    private List<WorkBootstrapDto.AttachmentDto> mapAttachments(List<Attachment> attachments) {
+        return attachments.stream().map(a -> new WorkBootstrapDto.AttachmentDto(
+            a.getId().toString(),
+            a.getFileName(),
+            a.getFileUrl(),
+            a.getMimeType(),
+            a.getFileSize(),
+            a.getCreatedAt().toString()
+        )).toList();
     }
 
     private WorkBootstrapDto.BoardDto toBoard(Project p) {
@@ -566,22 +985,22 @@ public class WorkService {
             p.getKeyCode(),
             p.getAccent(),
             p.getMembers().stream().map(m -> m.getId().toString()).toList(),
+            p.getType().name().toLowerCase(Locale.ROOT),
+            p.getParentProject() != null ? p.getParentProject().getId().toString() : null,
             p.getCreatedAt().toString()
         );
     }
 
     private WorkBootstrapDto.MemberDto toMember(User u) {
-        String role = u.getRoles().stream().findFirst().map(Enum::name).orElse("MEMBER");
+        List<String> roles = u.getRoles().stream().map(Enum::name).toList();
+        String role = roles.isEmpty() ? "STAFF" : roles.get(0);
         return new WorkBootstrapDto.MemberDto(
             u.getId().toString(),
             u.getFullName(),
             u.getInitials(),
-            role
+            role,
+            roles
         );
-    }
-
-    private WorkBootstrapDto.LabelDto toLabel(Label l) {
-        return new WorkBootstrapDto.LabelDto(l.getId().toString(), l.getName(), l.getColor());
     }
 
     private GanttDto.GanttTaskDto toGanttTask(Issue issue, Project project) {
@@ -608,59 +1027,140 @@ public class WorkService {
         );
     }
 
-    private WorkBootstrapDto.CardDto toCard(
+    private WorkBootstrapDto.CardDto toCardSummary(
         Issue i,
-        Map<UUID, List<IssueComment>> commentsByIssue,
-        Map<UUID, List<TimeEntry>> timeByIssue
+        Map<UUID, List<IssueComment>> commentsByIssue
     ) {
         List<IssueComment> comments = commentsByIssue.getOrDefault(i.getId(), List.of());
-        List<TimeEntry> times = timeByIssue.getOrDefault(i.getId(), List.of());
-        List<Attachment> attachments = attachmentRepository.findByIssueIdOrderByCreatedAtDesc(i.getId());
         return new WorkBootstrapDto.CardDto(
             i.getId().toString(),
             i.getProject().getId().toString(),
+            i.getBoardList() != null ? i.getBoardList().getId().toString() : null,
+            i.getParentIssue() != null ? i.getParentIssue().getId().toString() : null,
             i.getIssueNumber(),
-            i.getType().name(),
             i.getColumnId().name(),
             i.getTitle(),
             i.getDescription(),
             i.getPriority().name(),
             i.getAssignee() != null ? i.getAssignee().getId().toString() : null,
-            i.getLabels().stream().map(l -> l.getId().toString()).toList(),
             i.getDueDate() != null ? i.getDueDate().toString() : null,
             i.getEstimateMinutes(),
             i.getTrackedMinutes(),
-            comments.stream().map(c -> new WorkBootstrapDto.CommentDto(
-                c.getId().toString(),
-                c.getAuthor().getId().toString(),
-                c.getText(),
-                c.getCreatedAt().toString()
-            )).toList(),
-            times.stream().map(t -> new WorkBootstrapDto.TimeEntryDto(
-                t.getId().toString(),
-                t.getUser().getId().toString(),
-                t.getMinutes(),
-                t.getNote(),
-                t.getLoggedAt().toString()
-            )).toList(),
+            mapComments(comments),
+            List.of(),
             i.getSortOrder(),
             i.getCreatedAt().toString(),
             i.getUpdatedAt().toString(),
+            i.getAssignedAt() != null ? i.getAssignedAt().toString() : null,
+            i.getCompletedAt() != null ? i.getCompletedAt().toString() : null,
             i.getRequesterName(),
             i.getRequesterPhone(),
             i.getRequesterEmail(),
             i.getReceptionChannel(),
-            i.getPublicToken() != null ? i.getPublicToken().toString() : null,
+            null,
             i.getStartDate() != null ? i.getStartDate().toString() : null,
             i.getEndDate() != null ? i.getEndDate().toString() : null,
-            attachments.stream().map(a -> new WorkBootstrapDto.AttachmentDto(
-                a.getId().toString(),
-                a.getFileName(),
-                a.getFileUrl(),
-                a.getMimeType(),
-                a.getFileSize(),
-                a.getCreatedAt().toString()
-            )).toList()
+            List.of()
+        );
+    }
+
+    private WorkBootstrapDto.CardDto toPublicCard(Issue i) {
+        return new WorkBootstrapDto.CardDto(
+            i.getId().toString(),
+            i.getProject().getId().toString(),
+            i.getBoardList() != null ? i.getBoardList().getId().toString() : null,
+            null,
+            i.getIssueNumber(),
+            i.getColumnId().name(),
+            i.getTitle(),
+            i.getDescription(),
+            i.getPriority().name(),
+            null,
+            i.getDueDate() != null ? i.getDueDate().toString() : null,
+            i.getEstimateMinutes(),
+            i.getTrackedMinutes(),
+            List.of(),
+            List.of(),
+            i.getSortOrder(),
+            i.getCreatedAt().toString(),
+            i.getUpdatedAt().toString(),
+            i.getAssignedAt() != null ? i.getAssignedAt().toString() : null,
+            i.getCompletedAt() != null ? i.getCompletedAt().toString() : null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            i.getStartDate() != null ? i.getStartDate().toString() : null,
+            i.getEndDate() != null ? i.getEndDate().toString() : null,
+            List.of()
+        );
+    }
+
+    private WorkBootstrapDto.CardDto toCardLight(Issue i) {
+        return new WorkBootstrapDto.CardDto(
+            i.getId().toString(),
+            i.getProject().getId().toString(),
+            i.getBoardList() != null ? i.getBoardList().getId().toString() : null,
+            i.getParentIssue() != null ? i.getParentIssue().getId().toString() : null,
+            i.getIssueNumber(),
+            i.getColumnId().name(),
+            i.getTitle(),
+            i.getDescription(),
+            i.getPriority().name(),
+            i.getAssignee() != null ? i.getAssignee().getId().toString() : null,
+            i.getDueDate() != null ? i.getDueDate().toString() : null,
+            i.getEstimateMinutes(),
+            i.getTrackedMinutes(),
+            List.of(),
+            List.of(),
+            i.getSortOrder(),
+            i.getCreatedAt().toString(),
+            i.getUpdatedAt().toString(),
+            i.getAssignedAt() != null ? i.getAssignedAt().toString() : null,
+            i.getCompletedAt() != null ? i.getCompletedAt().toString() : null,
+            i.getRequesterName(),
+            i.getRequesterPhone(),
+            i.getRequesterEmail(),
+            i.getReceptionChannel(),
+            null,
+            i.getStartDate() != null ? i.getStartDate().toString() : null,
+            i.getEndDate() != null ? i.getEndDate().toString() : null,
+            List.of()
+        );
+    }
+
+    private WorkBootstrapDto.CardDto toCard(Issue i) {
+        UUID issueId = i.getId();
+        return new WorkBootstrapDto.CardDto(
+            issueId.toString(),
+            i.getProject().getId().toString(),
+            i.getBoardList() != null ? i.getBoardList().getId().toString() : null,
+            i.getParentIssue() != null ? i.getParentIssue().getId().toString() : null,
+            i.getIssueNumber(),
+            i.getColumnId().name(),
+            i.getTitle(),
+            i.getDescription(),
+            i.getPriority().name(),
+            i.getAssignee() != null ? i.getAssignee().getId().toString() : null,
+            i.getDueDate() != null ? i.getDueDate().toString() : null,
+            i.getEstimateMinutes(),
+            i.getTrackedMinutes(),
+            mapComments(commentRepository.findByIssueIdOrderByCreatedAtAsc(issueId)),
+            mapTimeEntries(timeEntryRepository.findByIssueIdOrderByLoggedAtDesc(issueId)),
+            i.getSortOrder(),
+            i.getCreatedAt().toString(),
+            i.getUpdatedAt().toString(),
+            i.getAssignedAt() != null ? i.getAssignedAt().toString() : null,
+            i.getCompletedAt() != null ? i.getCompletedAt().toString() : null,
+            i.getRequesterName(),
+            i.getRequesterPhone(),
+            i.getRequesterEmail(),
+            i.getReceptionChannel(),
+            null,
+            i.getStartDate() != null ? i.getStartDate().toString() : null,
+            i.getEndDate() != null ? i.getEndDate().toString() : null,
+            mapAttachments(attachmentRepository.findByIssueIdOrderByCreatedAtDesc(issueId))
         );
     }
 }

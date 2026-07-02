@@ -59,7 +59,7 @@ export class WorkWhiteboards implements OnInit, OnDestroy {
 
   boards = signal<WhiteboardDto[]>([]);
   selectedWhiteboardId = signal<string | null>(null);
-  selectedProjectId = signal<string | null>(null);
+  selectedBoardId = signal<string | null>(null);
   selectedElementId = signal<string | null>(null);
   content = signal<WhiteboardContent>(EMPTY_CONTENT);
   loading = signal(false);
@@ -74,8 +74,8 @@ export class WorkWhiteboards implements OnInit, OnDestroy {
 
   colors = ['#fef3c7', '#dbeafe', '#dcfce7', '#fce7f3', '#ede9fe', '#ffffff'];
 
-  projectOptions = computed(() => [
-    { label: 'Todos los proyectos', value: null },
+  boardOptions = computed(() => [
+    { label: 'Todos los tableros', value: null },
     ...this.workService.boards().map(board => ({ label: board.name, value: board.id })),
   ]);
 
@@ -104,7 +104,7 @@ export class WorkWhiteboards implements OnInit, OnDestroy {
     this.loading.set(true);
     try {
       if (environment.useApi) {
-        const boards = await firstValueFrom(this.workApi.listWhiteboards(this.selectedProjectId()));
+        const boards = await firstValueFrom(this.workApi.listWhiteboards(this.selectedBoardId()));
         this.boards.set(boards);
       } else {
         this.boards.set(this.loadLocalBoards());
@@ -124,9 +124,9 @@ export class WorkWhiteboards implements OnInit, OnDestroy {
   }
 
   async createWhiteboard(): Promise<void> {
-    const projectId = this.selectedProjectId();
+    const boardId = this.selectedBoardId();
     const payload: WhiteboardPayload = {
-      projectId,
+      projectId: boardId,
       name: 'Nueva pizarra',
       description: '',
       contentJson: JSON.stringify(EMPTY_CONTENT),
@@ -274,7 +274,7 @@ export class WorkWhiteboards implements OnInit, OnDestroy {
     this.saving.set(true);
     try {
       const payload: WhiteboardPayload = {
-        projectId: this.selectedBoard()?.projectId ?? this.selectedProjectId(),
+        projectId: this.selectedBoard()?.projectId ?? this.selectedBoardId(),
         name: this.boardName().trim() || 'Pizarra sin titulo',
         description: this.boardDescription(),
         contentJson: JSON.stringify(this.content()),
@@ -290,7 +290,7 @@ export class WorkWhiteboards implements OnInit, OnDestroy {
     }
   }
 
-  async applyProjectFilter(): Promise<void> {
+  async applyBoardFilter(): Promise<void> {
     await this.loadWhiteboards();
   }
 

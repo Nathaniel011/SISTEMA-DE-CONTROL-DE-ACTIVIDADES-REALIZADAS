@@ -4,8 +4,6 @@ import com.scar.api.domain.enums.*;
 import jakarta.persistence.*;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.util.HashSet;
-import java.util.Set;
 import java.util.UUID;
 
 @Entity
@@ -22,10 +20,6 @@ public class Issue {
 
     @Column(name = "issue_number", nullable = false)
     private int issueNumber;
-
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private IssueType type;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "column_id", nullable = false)
@@ -88,20 +82,20 @@ public class Issue {
     @JoinColumn(name = "board_list_id")
     private BoardList boardList;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "parent_issue_id")
+    private Issue parentIssue;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "created_by_id")
+    private User createdBy;
+
     @PrePersist
     void onCreate() {
         if (publicToken == null) {
             publicToken = UUID.randomUUID();
         }
     }
-
-    @ManyToMany
-    @JoinTable(
-        name = "issue_labels",
-        joinColumns = @JoinColumn(name = "issue_id"),
-        inverseJoinColumns = @JoinColumn(name = "label_id")
-    )
-    private Set<Label> labels = new HashSet<>();
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
@@ -119,8 +113,6 @@ public class Issue {
     public void setProject(Project project) { this.project = project; }
     public int getIssueNumber() { return issueNumber; }
     public void setIssueNumber(int issueNumber) { this.issueNumber = issueNumber; }
-    public IssueType getType() { return type; }
-    public void setType(IssueType type) { this.type = type; }
     public IssueColumn getColumnId() { return columnId; }
     public void setColumnId(IssueColumn columnId) { this.columnId = columnId; }
     public String getTitle() { return title; }
@@ -159,7 +151,10 @@ public class Issue {
     public void setCompletedAt(Instant completedAt) { this.completedAt = completedAt; }
     public BoardList getBoardList() { return boardList; }
     public void setBoardList(BoardList boardList) { this.boardList = boardList; }
-    public Set<Label> getLabels() { return labels; }
+    public Issue getParentIssue() { return parentIssue; }
+    public void setParentIssue(Issue parentIssue) { this.parentIssue = parentIssue; }
+    public User getCreatedBy() { return createdBy; }
+    public void setCreatedBy(User createdBy) { this.createdBy = createdBy; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 }

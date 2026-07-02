@@ -1,6 +1,7 @@
 import {computed, effect, inject, Injectable, signal, untracked} from '@angular/core';
 import {firstValueFrom} from 'rxjs';
 import {environment} from '../../../environments/environment';
+import {PermissionsService} from './permissions.service';
 import {AuthService} from './auth.service';
 import {UpdateIssuePayload, WorkApiService} from './work-api.service';
 import {
@@ -9,37 +10,70 @@ import {
   newCardId,
   WORK_STATUS_LABELS,
   WorkBoard,
+  WorkBoardList,
   WorkCard,
   WorkColumnId,
   WorkComment,
-  WorkIssueType,
   WorkActiveTimer,
   WorkState,
   WorkTimeEntry,
+  WorkAttachment,
 } from '../../features/work/work.models';
+import {WORK_DRAFT_CARD_TITLE} from '../../features/work/work.utils';
 
 const STORAGE_KEY = 'scar-work-v2';
+const RECENT_BOARDS_KEY = 'scar-recent-boards';
+const MAX_RECENT_BOARDS = 4;
 
 export type WorkIssueFilter = 'all' | 'assigned' | 'commented' | 'mentioned' | 'unassigned';
 
 @Injectable({ providedIn: 'root' })
 export class WorkService {
   private authService = inject(AuthService);
+  private permissions = inject(PermissionsService);
   private workApi = inject(WorkApiService);
   private state = signal<WorkState>(
     environment.useApi ? this.emptyState() : this.loadState()
   );
   private loading = signal(false);
+  private loadError = signal<string | null>(null);
+  private bootstrapPromise: Promise<void> | null = null;
 
-  selectedProjectId = signal<string | 'all'>('all');
+  selectedBoardId = signal<string | 'all'>('all');
   activeSavedSearch = signal<WorkIssueFilter>('all');
 
   isLoading = computed(() => this.loading());
+  bootstrapError = computed(() => this.loadError());
   activeTimer = computed(() => this.state().activeTimer);
   boards = computed(() => this.state().boards);
+  boardLists = computed(() => this.state().boardLists);
   cards = computed(() => this.state().cards);
-  labels = computed(() => this.state().labels);
   members = computed(() => this.state().members);
+
+  staffMembers = computed(() =>
+    this.members().filter(member => {
+      const roles = member.roles?.length ? member.roles : [member.role];
+      return !roles.some(role => this.permissions.isPrivilegedRole(role));
+    })
+  );
+
+  assignableMembers = computed(() => {
+    if (!this.canAssignTasks()) {
+      return [];
+    }
+    if (this.permissions.isSecretary()) {
+      return this.staffMembers();
+    }
+    return this.members();
+  });
+
+  generalBoard = computed(() =>
+    this.boards().find(b => b.type === 'general' || b.key === 'GEN') ?? null
+  );
+
+  standardBoards = computed(() =>
+    this.boards().filter(b => b.type !== 'general' && b.key !== 'GEN')
+  );
 
   constructor() {
     if (environment.useApi) {
@@ -55,25 +89,76 @@ export class WorkService {
     if (!environment.useApi) {
       return;
     }
-    this.loading.set(true);
-    try {
-      const data = await firstValueFrom(this.workApi.bootstrap());
-      this.state.set({
-        boards: data.boards,
-        cards: data.cards,
-        labels: data.labels,
-        members: data.members,
-        activeTimer: data.activeTimer,
-      });
-    } finally {
-      this.loading.set(false);
+    if (this.bootstrapPromise) {
+      return this.bootstrapPromise;
     }
+    this.loading.set(true);
+    this.loadError.set(null);
+    this.bootstrapPromise = (async () => {
+      try {
+        const data = await firstValueFrom(this.workApi.bootstrap());
+        this.state.set({
+          boards: data.boards.map(b => ({ ...b, type: b.type ?? 'standard' })),
+          boardLists: (data.boardLists ?? []).map(list => this.mapBoardList(list)),
+          cards: data.cards,
+          members: data.members,
+          activeTimer: data.activeTimer,
+        });
+      } catch {
+        this.loadError.set('No se pudo cargar los datos del tablero');
+        throw new Error('bootstrap failed');
+      } finally {
+        this.loading.set(false);
+        this.bootstrapPromise = null;
+      }
+    })();
+    return this.bootstrapPromise;
+  }
+
+  patchMembers(members: WorkState['members']): void {
+    this.patch({ members });
+  }
+
+  patchBoardMembers(boardId: string, memberIds: string[]): void {
+    this.patch({
+      boards: this.boards().map(board =>
+        board.id === boardId ? { ...board, memberIds } : board
+      ),
+    });
   }
 
   getCardsInColumn(boardId: string, columnId: WorkColumnId): WorkCard[] {
     return this.cards()
       .filter(c => c.boardId === boardId && c.columnId === columnId)
       .sort((a, b) => a.order - b.order);
+  }
+
+  getBoardLists(boardId: string): WorkBoardList[] {
+    return this.boardLists()
+      .filter(list => list.boardId === boardId && !list.archived)
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+  }
+
+  getCardsInList(boardId: string, listId: string): WorkCard[] {
+    return this.cards()
+      .filter(c => c.boardId === boardId && c.boardListId === listId)
+      .sort((a, b) => a.order - b.order);
+  }
+
+  canManageBoardLists(): boolean {
+    return this.permissions.canManageBoardLists();
+  }
+
+  canAssignTasks(): boolean {
+    return this.permissions.canAssignTasks();
+  }
+
+  canDeleteIssues(): boolean {
+    return this.permissions.canDeleteIssues();
+  }
+
+  canManageBoardMembers(): boolean {
+    return this.permissions.canManageBoardMembers();
   }
 
   getBoardStats(boardId: string) {
@@ -90,6 +175,89 @@ export class WorkService {
     return this.boards().find(b => b.id === id);
   }
 
+  getGeneralBoardId(): string | null {
+    return this.generalBoard()?.id ?? null;
+  }
+
+  getReceivedListId(boardId: string): string | null {
+    const list = this.boardLists()
+      .filter(l => l.boardId === boardId && !l.archived)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .find(l => l.name.toLowerCase().includes('recib'));
+    return list?.id ?? this.getBoardLists(boardId)[0]?.id ?? null;
+  }
+
+  recordBoardVisit(boardId: string): void {
+    try {
+      const recent = this.getRecentBoardIds().filter(id => id !== boardId);
+      recent.unshift(boardId);
+      localStorage.setItem(RECENT_BOARDS_KEY, JSON.stringify(recent.slice(0, MAX_RECENT_BOARDS)));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  getRecentBoardIds(): string[] {
+    try {
+      const raw = localStorage.getItem(RECENT_BOARDS_KEY);
+      if (!raw) return [];
+      const ids = JSON.parse(raw) as string[];
+      return ids.filter(id => !!this.getBoard(id));
+    } catch {
+      return [];
+    }
+  }
+
+  async createIncomingNote(title: string, extra?: {
+    requesterName?: string;
+    requesterPhone?: string;
+    requesterEmail?: string;
+    receptionChannel?: string;
+  }): Promise<WorkCard> {
+    const generalId = this.getGeneralBoardId() ?? this.boards()[0]?.id;
+    if (!generalId) {
+      throw new Error('No hay tablero general disponible');
+    }
+    const listId = this.getReceivedListId(generalId);
+    return this.createIssue(
+      generalId,
+      title,
+      'registered',
+      listId ?? undefined,
+      undefined,
+      {
+        receptionChannel: extra?.receptionChannel ?? 'oficina',
+        requesterName: extra?.requesterName,
+        requesterPhone: extra?.requesterPhone,
+        requesterEmail: extra?.requesterEmail,
+      }
+    );
+  }
+
+  async createDraftCard(options: {
+    boardId: string;
+    columnId?: WorkColumnId;
+    boardListId?: string;
+    incoming?: boolean;
+  }): Promise<WorkCard> {
+    if (options.incoming) {
+      return this.createIncomingNote(WORK_DRAFT_CARD_TITLE);
+    }
+
+    const lists = this.getBoardLists(options.boardId);
+    const listId =
+      options.boardListId ??
+      lists.find(l => l.name.toLowerCase() === 'tarea')?.id ??
+      lists[0]?.id;
+
+    return this.createIssue(
+      options.boardId,
+      WORK_DRAFT_CARD_TITLE,
+      options.columnId ?? 'todo',
+      listId
+    );
+  }
+
   getCard(id: string): WorkCard | undefined {
     return this.cards().find(c => c.id === id);
   }
@@ -103,20 +271,62 @@ export class WorkService {
     return WORK_STATUS_LABELS[columnId];
   }
 
+  getIssueListName(card: WorkCard): string | null {
+    if (!card.boardListId) return null;
+    return this.boardLists().find(list => list.id === card.boardListId)?.name ?? null;
+  }
+
+  getIssueDisplayStatus(card: WorkCard): string {
+    return this.getIssueListName(card) ?? this.getStatusLabel(card.columnId);
+  }
+
+  getBoardListsForCreate(boardId: string): WorkBoardList[] {
+    return this.getBoardLists(boardId);
+  }
+
+  resolveIssuePlacement(
+    boardId: string,
+    assigneeId: string | null,
+    boardListId?: string | null
+  ): { boardListId?: string; columnId: WorkColumnId } {
+    if (boardListId) {
+      const list = this.boardLists().find(l => l.id === boardListId);
+      return { boardListId, columnId: this.columnIdForListName(list?.name) };
+    }
+    if (assigneeId) {
+      const listId = this.findBoardListIdByName(boardId, 'asignado');
+      return { boardListId: listId, columnId: 'in_assignment' };
+    }
+    const listId = this.findBoardListIdByName(boardId, 'pendiente');
+    return { boardListId: listId, columnId: 'todo' };
+  }
+
+  private findBoardListIdByName(boardId: string, fragment: string): string | undefined {
+    return this.getBoardLists(boardId).find(l =>
+      l.name.toLowerCase().includes(fragment)
+    )?.id;
+  }
+
+  private columnIdForListName(name?: string): WorkColumnId {
+    if (!name) return 'todo';
+    const lower = name.toLowerCase();
+    if (lower.includes('hecho') || lower.includes('done')) return 'done';
+    if (lower.includes('proceso') || lower.includes('curso')) return 'in_progress';
+    if (lower.includes('asign')) return 'in_assignment';
+    if (lower.includes('registr')) return 'registered';
+    return 'todo';
+  }
+
   getMember(id: string | null) {
     if (!id) return undefined;
     return this.members().find(m => m.id === id);
-  }
-
-  getLabel(id: string) {
-    return this.labels().find(l => l.id === id);
   }
 
   getFilteredIssues(query = ''): WorkCard[] {
     const list = this.filterIssues(
       this.cards(),
       this.activeSavedSearch(),
-      this.selectedProjectId(),
+      this.selectedBoardId(),
       query
     );
     return list.sort((a, b) =>
@@ -125,10 +335,10 @@ export class WorkService {
   }
 
   countForSearch(filter: WorkIssueFilter): number {
-    return this.filterIssues(this.cards(), filter, this.selectedProjectId(), '').length;
+    return this.filterIssues(this.cards(), filter, this.selectedBoardId(), '').length;
   }
 
-  private currentMemberId(): string | undefined {
+  currentMemberId(): string | undefined {
     const userId = this.authService.currentUser()?.id;
     if (!userId) {
       return this.members()[0]?.id;
@@ -218,34 +428,36 @@ export class WorkService {
       .sort((a, b) => b.minutes - a.minutes);
   }
 
-  startTimer(cardId: string, note = ''): void {
+  startTimer(cardId: string, note = ''): Promise<void> {
     if (environment.useApi) {
-      void firstValueFrom(this.workApi.startTimer(cardId, note)).then(timer => {
+      return firstValueFrom(this.workApi.startTimer(cardId, note)).then(timer => {
         this.patch({ activeTimer: timer });
       });
-      return;
     }
     this.patch({ activeTimer: { cardId, startedAt: new Date().toISOString(), note } });
+    return Promise.resolve();
   }
 
-  stopTimer(): void {
+  stopTimer(): Promise<WorkTimeEntry | void> {
     if (environment.useApi) {
-      void firstValueFrom(this.workApi.stopTimer()).then(entry => {
+      return firstValueFrom(this.workApi.stopTimer()).then(entry => {
         const timer = this.activeTimer();
         if (timer) {
           this.appendTimeEntry(timer.cardId, entry);
         }
         this.patch({ activeTimer: null });
+        return entry;
       });
-      return;
     }
 
     const timer = this.activeTimer();
-    if (!timer) return;
+    if (!timer) return Promise.resolve();
     const elapsedMs = Date.now() - new Date(timer.startedAt).getTime();
     const minutes = Math.max(1, Math.round(elapsedMs / 60000));
-    this.logTime(timer.cardId, minutes, timer.note || 'Registro automático del cronómetro');
-    this.patch({ activeTimer: null });
+    return this.logTime(timer.cardId, minutes, timer.note || 'Registro automático del cronómetro').then(entry => {
+      this.patch({ activeTimer: null });
+      return entry;
+    });
   }
 
   cancelTimer(): void {
@@ -260,8 +472,8 @@ export class WorkService {
 
   createBoard(payload: Pick<WorkBoard, 'name' | 'description'>): WorkBoard {
     if (environment.useApi) {
-      void firstValueFrom(this.workApi.createProject(payload)).then(board => {
-        this.patch({ boards: [...this.boards(), board] });
+      void firstValueFrom(this.workApi.createBoard(payload)).then(async () => {
+        await this.loadFromApi();
       });
       return {
         id: 'pending',
@@ -284,65 +496,105 @@ export class WorkService {
       type: 'standard',
       createdAt: new Date().toISOString(),
     };
-    this.patch({ boards: [...this.boards(), board] });
+    const now = new Date().toISOString();
+    const taskList: WorkBoardList = {
+      id: newBoardId(),
+      boardId: board.id,
+      name: 'Tarea',
+      sortOrder: 0,
+      archived: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.patch({
+      boards: [...this.boards(), board],
+      boardLists: [...this.boardLists(), taskList],
+    });
     return board;
   }
 
-  createIssue(
+  async deleteBoard(boardId: string): Promise<void> {
+    if (environment.useApi) {
+      await firstValueFrom(this.workApi.deleteBoard(boardId));
+      this.patch({
+        boards: this.boards().filter(board => board.id !== boardId),
+        boardLists: this.boardLists().filter(list => list.boardId !== boardId),
+        cards: this.cards().filter(card => card.boardId !== boardId),
+      });
+      if (this.selectedBoardId() === boardId) {
+        this.selectedBoardId.set('all');
+      }
+      return;
+    }
+    this.patch({
+      boards: this.boards().filter(board => board.id !== boardId),
+      boardLists: this.boardLists().filter(list => list.boardId !== boardId),
+      cards: this.cards().filter(card => card.boardId !== boardId),
+    });
+  }
+
+  async createIssue(
     boardId: string,
     title: string,
-    type: WorkIssueType = 'task',
-    columnId: WorkColumnId = 'todo'
-  ): WorkCard {
+    columnId: WorkColumnId = 'todo',
+    boardListId?: string,
+    parentIssueId?: string,
+    options?: {
+      assigneeId?: string | null;
+      requesterName?: string;
+      requesterPhone?: string;
+      requesterEmail?: string;
+      receptionChannel?: string;
+    }
+  ): Promise<WorkCard> {
+    const placement = this.resolveIssuePlacement(boardId, options?.assigneeId ?? null, boardListId);
+    const resolvedListId = boardListId ?? placement.boardListId;
+    const resolvedColumnId = boardListId ? columnId : placement.columnId;
+
     if (environment.useApi) {
-      void firstValueFrom(this.workApi.createIssue({ boardId, title, type, columnId })).then(card => {
-        this.patch({ cards: [...this.cards(), card] });
-      });
-      return {
-        id: 'pending',
-        boardId,
-        issueNumber: 0,
-        type,
-        columnId,
-        title,
-        description: '',
-        priority: 'medium',
-        assigneeId: null,
-        labelIds: [],
-        dueDate: null,
-        estimateMinutes: null,
-        trackedMinutes: 0,
-        attachments: [],
-        comments: [],
-        timeEntries: [],
-        order: 0,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
+      const card = await firstValueFrom(
+        this.workApi.createIssue({
+          boardId,
+          title,
+          columnId: resolvedColumnId,
+          boardListId: resolvedListId,
+          parentIssueId,
+          assigneeId: options?.assigneeId ?? undefined,
+          requesterName: options?.requesterName,
+          requesterPhone: options?.requesterPhone,
+          requesterEmail: options?.requesterEmail,
+          receptionChannel: options?.receptionChannel,
+        })
+      );
+      this.replaceCard(card);
+      return card;
     }
 
     const issueNumber = this.nextIssueNumber(boardId);
     const now = new Date().toISOString();
     const currentUser = this.authService.currentUser();
-    const assignee = this.members().find(m => m.id === currentUser?.id)?.id ?? null;
+    const assignee =
+      options?.assigneeId ??
+      this.members().find(m => m.id === currentUser?.id)?.id ??
+      null;
     const card: WorkCard = {
       id: newCardId(),
       boardId,
+      boardListId: resolvedListId ?? null,
+      parentIssueId: parentIssueId,
       issueNumber,
-      type,
-      columnId,
+      columnId: resolvedColumnId,
       title: title.trim(),
       description: '',
       priority: 'medium',
       assigneeId: assignee,
-      labelIds: [],
       dueDate: null,
       estimateMinutes: null,
       trackedMinutes: 0,
       attachments: [],
       comments: [],
       timeEntries: [],
-      order: this.nextOrder(boardId, columnId),
+      order: this.nextOrder(boardId, resolvedColumnId),
       createdAt: now,
       updatedAt: now,
     };
@@ -350,26 +602,102 @@ export class WorkService {
     return card;
   }
 
-  createCard(boardId: string, columnId: WorkColumnId, title: string): WorkCard {
-    const card = this.createIssue(boardId, title, 'task', columnId);
+  async createCard(boardId: string, columnOrListId: string, title: string, useList = false, parentIssueId?: string): Promise<WorkCard> {
+    if (useList) {
+      const card = await this.createIssue(boardId, title, 'todo', columnOrListId, parentIssueId);
+      return this.getCard(card.id) ?? card;
+    }
+    const card = await this.createIssue(boardId, title, columnOrListId as WorkColumnId);
     return this.getCard(card.id) ?? card;
   }
 
-  updateCard(cardId: string, patch: Partial<WorkCard>): void {
+  async createSubtask(parentCardId: string, title: string): Promise<WorkCard> {
+    const parent = this.getCard(parentCardId);
+    if (!parent) {
+      throw new Error('Tarjeta padre no encontrada');
+    }
+    return this.createCard(
+      parent.boardId,
+      parent.boardListId ?? parent.columnId,
+      title,
+      !!parent.boardListId,
+      parentCardId
+    );
+  }
+
+  async createBoardList(boardId: string, name: string): Promise<void> {
+    const lists = this.getBoardLists(boardId);
     if (environment.useApi) {
-      const card = this.getCard(cardId);
-      if (!card) return;
-      const merged = { ...card, ...patch };
+      const created = await firstValueFrom(
+        this.workApi.createBoardList(boardId, { name: name.trim(), sortOrder: lists.length })
+      );
+      this.patch({ boardLists: [...this.boardLists(), this.mapBoardList(created)] });
+      return;
+    }
+    const list: WorkBoardList = {
+      id: crypto.randomUUID(),
+      boardId,
+      name: name.trim(),
+      sortOrder: lists.length,
+      archived: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    this.patch({ boardLists: [...this.boardLists(), list] });
+  }
+
+  async renameBoardList(boardId: string, listId: string, name: string): Promise<void> {
+    const list = this.boardLists().find(l => l.id === listId);
+    if (!list) return;
+    if (environment.useApi) {
+      const updated = await firstValueFrom(
+        this.workApi.updateBoardList(boardId, listId, { name: name.trim(), sortOrder: list.sortOrder })
+      );
+      this.patch({
+        boardLists: this.boardLists().map(l => (l.id === listId ? this.mapBoardList(updated) : l)),
+      });
+      return;
+    }
+    this.patch({
+      boardLists: this.boardLists().map(l =>
+        l.id === listId ? { ...l, name: name.trim(), updatedAt: new Date().toISOString() } : l
+      ),
+    });
+  }
+
+  moveCardToList(cardId: string, listId: string, toIndex?: number): void {
+    if (environment.useApi) {
+      void firstValueFrom(this.workApi.moveIssue(cardId, { boardListId: listId, targetIndex: toIndex })).then(updated => {
+        this.replaceCard(updated);
+      });
+      return;
+    }
+    const card = this.getCard(cardId);
+    if (!card) return;
+    this.updateCard(cardId, { boardListId: listId, updatedAt: new Date().toISOString() });
+  }
+
+  updateCard(cardId: string, patch: Partial<WorkCard>): void {
+    void this.updateCardAsync(cardId, patch);
+  }
+
+  updateCardAsync(cardId: string, patch: Partial<WorkCard>): Promise<WorkCard | void> {
+    const card = this.getCard(cardId);
+    if (!card) return Promise.resolve();
+
+    const merged: WorkCard = { ...card, ...patch, updatedAt: new Date().toISOString() };
+    this.replaceCard(merged);
+
+    if (environment.useApi) {
       const payload: UpdateIssuePayload = {
         title: merged.title,
         description: merged.description,
-        type: merged.type,
         columnId: merged.columnId,
         priority: merged.priority,
         assigneeId: merged.assigneeId,
         dueDate: merged.dueDate,
         estimateMinutes: merged.estimateMinutes,
-        labelIds: merged.labelIds,
+        boardListId: merged.boardListId,
         requesterName: merged.requesterName,
         requesterPhone: merged.requesterPhone,
         requesterEmail: merged.requesterEmail,
@@ -377,21 +705,31 @@ export class WorkService {
         startDate: merged.startDate,
         endDate: merged.endDate,
       };
-      void firstValueFrom(this.workApi.updateIssue(cardId, payload)).then(updated => {
-        this.replaceCard(updated);
-      });
-      return;
+      return firstValueFrom(this.workApi.updateIssue(cardId, payload))
+        .then(updated => {
+          const result: WorkCard = {
+            ...updated,
+            attachments: updated.attachments.length ? updated.attachments : card.attachments,
+            timeEntries: updated.timeEntries.length ? updated.timeEntries : card.timeEntries,
+            comments: updated.comments.length ? updated.comments : card.comments,
+          };
+          this.replaceCard(result);
+          return result;
+        })
+        .catch(() => {
+          this.replaceCard(card);
+          throw new Error('update failed');
+        });
     }
 
-    const cards = this.cards().map(c =>
-      c.id === cardId ? { ...c, ...patch, updatedAt: new Date().toISOString() } : c
-    );
+    const cards = this.cards().map(c => (c.id === cardId ? merged : c));
     this.patch({ cards });
+    return Promise.resolve(merged);
   }
 
   moveCard(cardId: string, toColumnId: WorkColumnId, toIndex?: number): void {
     if (environment.useApi) {
-      void firstValueFrom(this.workApi.moveIssue(cardId, toColumnId, toIndex)).then(updated => {
+      void firstValueFrom(this.workApi.moveIssue(cardId, { columnId: toColumnId, targetIndex: toIndex })).then(updated => {
         this.replaceCard(updated);
       });
       return;
@@ -432,17 +770,35 @@ export class WorkService {
     this.patch({ cards: [...rest, ...newSource, ...newDest] });
   }
 
-  moveCardToBoard(cardId: string, targetBoardId: string, targetColumnId: WorkColumnId, targetIndex?: number): void {
+  moveCardToBoard(
+    cardId: string,
+    targetBoardId: string,
+    targetColumnId: WorkColumnId,
+    targetIndex?: number,
+    boardListId?: string
+  ): Promise<void> {
     if (environment.useApi) {
-      void firstValueFrom(this.workApi.moveIssue(cardId, targetColumnId, targetIndex, targetBoardId)).then(updated => {
-        this.replaceCard(updated);
+      return firstValueFrom(
+        this.workApi.moveIssue(cardId, {
+          columnId: targetColumnId,
+          targetIndex,
+          targetBoardId,
+          boardListId,
+        })
+      ).then(updated => {
+        const existing = this.getCard(cardId);
+        this.replaceCard({
+          ...updated,
+          attachments: existing?.attachments ?? updated.attachments,
+          timeEntries: existing?.timeEntries ?? updated.timeEntries,
+          comments: existing?.comments ?? updated.comments,
+        });
       });
-      return;
     }
 
     const all = this.cards();
     const current = all.find(c => c.id === cardId);
-    if (!current) return;
+    if (!current) return Promise.resolve();
 
     const sourceBoardId = current.boardId;
     const fromColumn = current.columnId;
@@ -463,6 +819,7 @@ export class WorkService {
     const movedCard: WorkCard = {
       ...current,
       boardId: targetBoardId,
+      boardListId: boardListId ?? this.getBoardLists(targetBoardId)[0]?.id ?? null,
       columnId: targetColumnId,
       issueNumber: this.nextIssueNumber(targetBoardId),
       updatedAt: new Date().toISOString(),
@@ -477,22 +834,23 @@ export class WorkService {
     );
 
     this.patch({ cards: [...rest, ...newSource, ...newDest] });
+    return Promise.resolve();
   }
 
-  addComment(cardId: string, text: string): void {
-    if (!text.trim()) return;
+  addComment(cardId: string, text: string): Promise<WorkComment | void> {
+    if (!text.trim()) return Promise.resolve();
 
     if (environment.useApi) {
-      void firstValueFrom(this.workApi.addComment(cardId, text)).then(comment => {
+      return firstValueFrom(this.workApi.addComment(cardId, text)).then(comment => {
         const card = this.getCard(cardId);
-        if (!card) return;
+        if (!card) return comment;
         this.replaceCard({ ...card, comments: [...card.comments, comment] });
+        return comment;
       });
-      return;
     }
 
     const card = this.getCard(cardId);
-    if (!card) return;
+    if (!card) return Promise.resolve();
     const authorId = this.currentMemberId() ?? this.members()[0].id;
     const comment: WorkComment = {
       id: crypto.randomUUID(),
@@ -501,20 +859,21 @@ export class WorkService {
       createdAt: new Date().toISOString(),
     };
     this.updateCard(cardId, { comments: [...card.comments, comment] });
+    return Promise.resolve(comment);
   }
 
-  logTime(cardId: string, minutes: number, note: string): void {
-    if (minutes <= 0) return;
+  logTime(cardId: string, minutes: number, note: string): Promise<WorkTimeEntry | void> {
+    if (minutes <= 0) return Promise.resolve();
 
     if (environment.useApi) {
-      void firstValueFrom(this.workApi.logTime(cardId, minutes, note)).then(entry => {
+      return firstValueFrom(this.workApi.logTime(cardId, minutes, note)).then(entry => {
         this.appendTimeEntry(cardId, entry);
+        return entry;
       });
-      return;
     }
 
     const card = this.getCard(cardId);
-    if (!card) return;
+    if (!card) return Promise.resolve();
     const memberId = this.currentMemberId() ?? this.members()[0].id;
     const entry: WorkTimeEntry = {
       id: crypto.randomUUID(),
@@ -527,16 +886,46 @@ export class WorkService {
       timeEntries: [...card.timeEntries, entry],
       trackedMinutes: card.trackedMinutes + minutes,
     });
+    return Promise.resolve(entry);
   }
 
-  deleteCard(cardId: string): void {
+  addAttachment(cardId: string, attachment: WorkAttachment): void {
+    const card = this.getCard(cardId);
+    if (!card) return;
+    this.replaceCard({
+      ...card,
+      attachments: [attachment, ...card.attachments],
+    });
+  }
+
+  removeAttachment(cardId: string, attachmentId: string): void {
+    const card = this.getCard(cardId);
+    if (!card) return;
+    this.replaceCard(
+      {
+        ...card,
+        attachments: card.attachments.filter(a => a.id !== attachmentId),
+      },
+      { keepDetailsOnEmpty: false }
+    );
+  }
+
+  appendTimeEntryPublic(cardId: string, entry: WorkTimeEntry): void {
+    this.appendTimeEntry(cardId, entry);
+  }
+
+  replaceCardPublic(updated: WorkCard): void {
+    this.replaceCard(updated);
+  }
+
+  deleteCard(cardId: string): Promise<void> {
     if (environment.useApi) {
-      void firstValueFrom(this.workApi.deleteIssue(cardId)).then(() => {
+      return firstValueFrom(this.workApi.deleteIssue(cardId)).then(() => {
         this.patch({ cards: this.cards().filter(c => c.id !== cardId) });
       });
-      return;
     }
     this.patch({ cards: this.cards().filter(c => c.id !== cardId) });
+    return Promise.resolve();
   }
 
   private appendTimeEntry(cardId: string, entry: WorkTimeEntry): void {
@@ -549,11 +938,34 @@ export class WorkService {
     });
   }
 
-  private replaceCard(updated: WorkCard): void {
+  private replaceCard(
+    updated: WorkCard,
+    options: { keepDetailsOnEmpty?: boolean } = { keepDetailsOnEmpty: true }
+  ): void {
+    const existing = this.getCard(updated.id);
+    const keepDetailsOnEmpty = options.keepDetailsOnEmpty ?? true;
+    const merged: WorkCard = existing
+      ? {
+          ...existing,
+          ...updated,
+          attachments:
+            keepDetailsOnEmpty && !updated.attachments.length && existing.attachments.length
+              ? existing.attachments
+              : updated.attachments,
+          timeEntries:
+            keepDetailsOnEmpty && !updated.timeEntries.length && existing.timeEntries.length
+              ? existing.timeEntries
+              : updated.timeEntries,
+          comments:
+            keepDetailsOnEmpty && !updated.comments.length && existing.comments.length
+              ? existing.comments
+              : updated.comments,
+        }
+      : updated;
     this.patch({
-      cards: this.cards().some(c => c.id === updated.id)
-        ? this.cards().map(c => (c.id === updated.id ? updated : c))
-        : [...this.cards(), updated],
+      cards: this.cards().some(c => c.id === merged.id)
+        ? this.cards().map(c => (c.id === merged.id ? merged : c))
+        : [...this.cards(), merged],
     });
   }
 
@@ -570,10 +982,22 @@ export class WorkService {
   private emptyState(): WorkState {
     return {
       boards: [],
+      boardLists: [],
       cards: [],
-      labels: [],
       members: [],
       activeTimer: null,
+    };
+  }
+
+  private mapBoardList(raw: WorkBoardList & { projectId?: string }): WorkBoardList {
+    return {
+      id: String(raw.id),
+      boardId: String(raw.boardId ?? raw.projectId),
+      name: raw.name,
+      sortOrder: raw.sortOrder,
+      archived: raw.archived,
+      createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : String(raw.createdAt),
+      updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : String(raw.updatedAt),
     };
   }
 
@@ -605,8 +1029,7 @@ export class WorkService {
     const cards = state.cards.map((c, i) => ({
       ...c,
       issueNumber: c.issueNumber ?? i + 1,
-      type: c.type ?? ('task' as WorkIssueType),
     }));
-    return { ...state, cards, activeTimer: state.activeTimer ?? null };
+    return { ...state, cards, boardLists: state.boardLists ?? [], activeTimer: state.activeTimer ?? null };
   }
 }
