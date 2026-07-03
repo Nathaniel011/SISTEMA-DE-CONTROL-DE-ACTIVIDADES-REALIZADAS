@@ -971,11 +971,17 @@ export class WorkService {
     return Promise.resolve(comment);
   }
 
-  logTime(cardId: string, minutes: number, note: string): Promise<WorkTimeEntry | void> {
+  logTime(
+    cardId: string,
+    minutes: number,
+    note: string,
+    loggedAt?: string,
+    activityType?: string
+  ): Promise<WorkTimeEntry | void> {
     if (minutes <= 0) return Promise.resolve();
 
     if (environment.useApi) {
-      return firstValueFrom(this.workApi.logTime(cardId, minutes, note)).then(entry => {
+      return firstValueFrom(this.workApi.logTime(cardId, minutes, note, loggedAt, activityType)).then(entry => {
         this.appendTimeEntry(cardId, entry);
         return entry;
       });
@@ -989,7 +995,8 @@ export class WorkService {
       memberId,
       minutes,
       note: note.trim(),
-      loggedAt: new Date().toISOString(),
+      loggedAt: loggedAt ?? new Date().toISOString(),
+      activityType: activityType ?? 'Trabajo',
     };
     this.updateCard(cardId, {
       timeEntries: [...card.timeEntries, entry],

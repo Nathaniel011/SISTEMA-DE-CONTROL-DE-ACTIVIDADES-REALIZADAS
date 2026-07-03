@@ -62,6 +62,7 @@ export interface WorkTimeEntry {
   minutes: number;
   note: string;
   loggedAt: string;
+  activityType?: string;
 }
 
 export interface WorkAttachment {

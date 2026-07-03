@@ -140,7 +140,14 @@ export interface TimeEntryWithIssue {
   id: string;
   issueId: string;
   memberId: string;
+  projectId: string;
+  projectName: string;
+  projectKey: string;
+  issueNumber: number;
+  issueTitle: string;
+  issueType: string | null;
   minutes: number;
+  activityType: string;
   note: string;
   loggedAt: string;
 }
@@ -264,8 +271,13 @@ export class WorkApiService {
     return this.http.post<WorkComment>(`${this.base}/api/issues/${issueId}/comments`, { text });
   }
 
-  logTime(issueId: string, minutes: number, note: string): Observable<WorkTimeEntry> {
-    return this.http.post<WorkTimeEntry>(`${this.base}/api/issues/${issueId}/time`, { minutes, note });
+  logTime(issueId: string, minutes: number, note: string, loggedAt?: string, activityType?: string): Observable<WorkTimeEntry> {
+    return this.http.post<WorkTimeEntry>(`${this.base}/api/issues/${issueId}/time`, {
+      minutes,
+      note,
+      loggedAt,
+      activityType,
+    });
   }
 
   startTimer(cardId: string, note = ''): Observable<WorkActiveTimer> {

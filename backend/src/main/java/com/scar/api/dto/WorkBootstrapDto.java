@@ -22,7 +22,7 @@ public record WorkBootstrapDto(
     ) {}
     public record MemberDto(String id, String name, String initials, String role, List<String> roles) {}
     public record CommentDto(String id, String authorId, String text, String createdAt) {}
-    public record TimeEntryDto(String id, String memberId, int minutes, String note, String loggedAt) {}
+    public record TimeEntryDto(String id, String memberId, int minutes, String note, String loggedAt, String activityType) {}
     public record CardDto(
         String id,
         String boardId,

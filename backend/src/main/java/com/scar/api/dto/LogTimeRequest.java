@@ -5,5 +5,7 @@ import jakarta.validation.constraints.NotNull;
 
 public record LogTimeRequest(
     @NotNull @Min(1) Integer minutes,
-    String note
+    String note,
+    String loggedAt,
+    String activityType
 ) {}

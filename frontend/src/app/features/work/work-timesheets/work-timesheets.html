@@ -1,67 +1,418 @@
 <div class="yt-content yt-content-standalone">
-  <div class="yt-content-header">
-    <h1 class="yt-content-title m-0">Partes de horas</h1>
-  </div>
+  <div class="rounded-2xl border border-surface-200 bg-surface-0 overflow-hidden">
+    <div class="p-4 border-b border-surface-200 flex flex-col gap-4">
+      <div class="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            class="px-3 py-2 rounded-lg text-sm font-medium"
+            [class.bg-primary-100]="scope() === 'people'"
+            [class.text-primary-800]="scope() === 'people'"
+            (click)="setScope('people')"
+          >
+            Personas
+          </button>
+          <button
+            type="button"
+            class="px-3 py-2 rounded-lg text-sm font-medium"
+            [class.bg-primary-100]="scope() === 'projects'"
+            [class.text-primary-800]="scope() === 'projects'"
+            (click)="setScope('projects')"
+          >
+            Proyectos
+          </button>
+          <button
+            type="button"
+            class="px-3 py-2 rounded-lg text-sm font-medium"
+            [class.bg-primary-100]="scope() === 'workgroups'"
+            [class.text-primary-800]="scope() === 'workgroups'"
+            (click)="setScope('workgroups')"
+          >
+            Grupos de trabajo
+          </button>
+        </div>
 
-  <div class="rounded-2xl border border-primary-200 bg-primary-50/40 p-5 mb-6">
-    <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-      <div>
-        <h3 class="font-semibold text-primary-900 m-0 mb-1">Cronómetro activo</h3>
-        <p class="text-sm text-primary-800 m-0">Registra tiempo en incidencias como en Hubstaff.</p>
+        <div class="flex flex-wrap items-center gap-2">
+          <p-button icon="pi pi-chevron-left" size="small" severity="secondary" [outlined]="true" (onClick)="previousPeriod()" />
+          <p-button label="Hoy" size="small" severity="secondary" [outlined]="true" (onClick)="goToday()" />
+          <p-button icon="pi pi-chevron-right" size="small" severity="secondary" [outlined]="true" (onClick)="nextPeriod()" />
+          <p-button
+            label="Semana"
+            size="small"
+            [severity]="viewMode() === 'week' ? 'primary' : 'secondary'"
+            [outlined]="viewMode() !== 'week'"
+            (onClick)="setViewMode('week')"
+          />
+          <p-button
+            label="Mes"
+            size="small"
+            [severity]="viewMode() === 'month' ? 'primary' : 'secondary'"
+            [outlined]="viewMode() !== 'month'"
+            (onClick)="setViewMode('month')"
+          />
+          <p-button
+            label="Añadir tiempo empleado"
+            icon="pi pi-plus"
+            size="small"
+            (onClick)="showAddForm.set(true)"
+          />
+        </div>
       </div>
-      @if (workService.activeTimer(); as timer) {
-        @let card = activeCard();
-        <div class="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+
+      <div class="grid grid-cols-1 lg:grid-cols-[16rem_1fr] gap-3 items-end">
+        @if (scope() === 'people') {
+          <label class="flex flex-col gap-1 text-sm">
+            <span class="text-surface-600 font-medium">Persona</span>
+            <p-select
+              [options]="memberOptions()"
+              optionLabel="label"
+              optionValue="value"
+              [ngModel]="selectedMemberId()"
+              (ngModelChange)="selectedMemberId.set($event)"
+              class="w-full"
+              appendTo="body"
+            />
+          </label>
+        } @else if (scope() === 'projects') {
+          <label class="flex flex-col gap-1 text-sm">
+            <span class="text-surface-600 font-medium">Proyecto</span>
+            <p-select
+              [options]="projectOptions()"
+              optionLabel="label"
+              optionValue="value"
+              [ngModel]="selectedProjectId()"
+              (ngModelChange)="selectedProjectId.set($event)"
+              class="w-full"
+              appendTo="body"
+            />
+          </label>
+        } @else {
+          <label class="flex flex-col gap-1 text-sm">
+            <span class="text-surface-600 font-medium">Grupo de trabajo</span>
+            <p-select
+              [options]="workGroupOptions()"
+              optionLabel="label"
+              optionValue="value"
+              [ngModel]="selectedWorkGroup()"
+              (ngModelChange)="selectedWorkGroup.set($event)"
+              class="w-full"
+              appendTo="body"
+            />
+          </label>
+        }
+
+        <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2">
           <div>
-            <div class="font-mono text-3xl font-bold text-primary-700">{{ formatSeconds(elapsedSeconds()) }}</div>
-            <div class="text-sm text-primary-800">
-              {{ card ? workService.getIssueKey(card) + ' — ' + card.title : 'Incidencia' }}
+            <h2 class="text-xl font-semibold capitalize m-0">{{ monthLabel() }}</h2>
+            <p class="text-sm text-surface-500 m-0">
+              Tiempo empleado {{ formatMinutes(totalVisibleMinutes()) }}
+            </p>
+          </div>
+          @if (loadingEntries()) {
+            <span class="text-sm text-surface-500">
+              <i class="pi pi-spin pi-spinner mr-1"></i>
+              Cargando partes…
+            </span>
+          }
+        </div>
+      </div>
+    </div>
+
+    @if (scope() === 'projects') {
+      <div class="px-4 py-3 border-b border-surface-200">
+        <div class="text-sm font-semibold">{{ selectedProjectLabel() }}</div>
+        <div class="text-xs text-surface-500 mt-1">Usuarios y tiempo empleado por día</div>
+      </div>
+
+      <div class="overflow-x-auto">
+        <div
+          class="min-w-[920px] text-xs"
+          [style.gridTemplateColumns]="'14rem 6rem repeat(' + projectTimelineDays().length + ', minmax(4rem, 1fr))'"
+        >
+          <div class="grid" [style.gridTemplateColumns]="'14rem 6rem repeat(' + projectTimelineDays().length + ', minmax(4rem, 1fr))'">
+            <div class="px-3 py-2 border-r border-b border-surface-200 bg-surface-50 font-semibold">Usuario</div>
+            <div class="px-3 py-2 border-r border-b border-surface-200 bg-surface-50 font-semibold text-right">Total</div>
+            @for (day of projectTimelineDays(); track day.iso) {
+              <div
+                class="px-2 py-2 border-r border-b border-surface-200 bg-surface-50 text-center"
+                [class.bg-primary-100]="day.isToday"
+              >
+                <div class="font-semibold">{{ day.dayLabel }}</div>
+                <div class="text-[0.65rem] text-surface-500">{{ day.weekdayLabel }}</div>
+              </div>
+            }
+          </div>
+
+          <div class="grid" [style.gridTemplateColumns]="'14rem 6rem repeat(' + projectTimelineDays().length + ', minmax(4rem, 1fr))'">
+            <div class="px-3 py-2 border-r border-b border-surface-200 font-semibold">Tiempo total</div>
+            <div class="px-3 py-2 border-r border-b border-surface-200 font-semibold text-right">
+              {{ formatMinutes(totalVisibleMinutes()) }}
+            </div>
+            @for (day of projectTimelineDays(); track day.iso) {
+              <div
+                class="px-2 py-2 border-r border-b border-surface-200 text-center font-medium"
+                [class.bg-primary-50]="day.isToday"
+              >
+                {{ formatMinutes(day.totalMinutes) }}
+              </div>
+            }
+          </div>
+
+          @for (row of projectTimelineRows(); track row.memberId) {
+            <div class="grid" [style.gridTemplateColumns]="'14rem 6rem repeat(' + projectTimelineDays().length + ', minmax(4rem, 1fr))'">
+              <div class="px-3 py-2 border-r border-b border-surface-200 flex items-center gap-2">
+                <span class="w-5 h-5 rounded bg-primary-100 text-primary-700 inline-flex items-center justify-center text-[0.65rem] font-bold">
+                  {{ row.memberLabel.slice(0, 1) }}
+                </span>
+                <span class="truncate">{{ row.memberLabel }}</span>
+              </div>
+              <div class="px-3 py-2 border-r border-b border-surface-200 text-right font-medium">
+                {{ formatMinutes(row.totalMinutes) }}
+              </div>
+              @for (day of projectTimelineDays(); track day.iso) {
+                <div
+                  class="px-2 py-2 border-r border-b border-surface-200 text-center"
+                  [class.bg-primary-600]="(row.minutesByDate[day.iso] ?? 0) > 0"
+                  [class.text-white]="(row.minutesByDate[day.iso] ?? 0) > 0"
+                  [class.bg-primary-50]="day.isToday && !(row.minutesByDate[day.iso] ?? 0)"
+                >
+                  {{ formatMinutes(row.minutesByDate[day.iso] ?? 0) }}
+                </div>
+              }
+            </div>
+          } @empty {
+            <div class="p-8 text-center text-surface-500">
+              No hay registros de tiempo para el proyecto seleccionado.
+            </div>
+          }
+        </div>
+      </div>
+    } @else {
+      <div class="grid grid-cols-7 border-b border-surface-200 bg-surface-50">
+        @for (day of calendarDays().slice(0, 7); track day.weekday) {
+          <div class="px-3 py-2 text-xs font-semibold text-surface-500 border-r border-surface-200 last:border-r-0">
+            {{ day.weekday }}
+          </div>
+        }
+      </div>
+
+      <div class="grid grid-cols-7">
+        @for (day of calendarDays(); track day.iso) {
+          <div
+            class="min-h-36 border-r border-b border-surface-200 p-2 bg-surface-0"
+            [class.bg-surface-50]="!day.inMonth && viewMode() === 'month'"
+            [class.ring-2]="day.isToday"
+            [class.ring-primary-300]="day.isToday"
+            [title]="dayDetails(day)"
+          >
+            <div class="flex items-center justify-between gap-2 mb-2">
+              <span
+                class="text-sm font-semibold"
+                [class.text-surface-400]="!day.inMonth && viewMode() === 'month'"
+                [class.text-primary-700]="day.isToday"
+              >
+                {{ day.label }}
+              </span>
+              <span
+                class="text-[0.65rem] px-1.5 py-0.5 rounded bg-surface-100 text-surface-600"
+                [class.bg-primary-100]="day.totalMinutes > 0"
+                [class.text-primary-800]="day.totalMinutes > 0"
+              >
+                {{ formatMinutes(day.totalMinutes) }}
+              </span>
+            </div>
+
+            <div class="flex flex-col gap-1">
+              @for (row of day.entries.slice(0, 4); track row.entry.id) {
+                <div class="rounded-md border border-surface-200 bg-surface-50 px-2 py-1 text-xs">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="font-mono text-primary-700 truncate">{{ row.issueKey }}</span>
+                    <span class="font-medium text-surface-700">{{ formatMinutes(row.entry.minutes) }}</span>
+                  </div>
+                  <div class="truncate text-surface-600">{{ row.entry.note || row.entry.issueTitle }}</div>
+                  <div class="truncate text-surface-400">{{ row.memberLabel }} · {{ row.projectLabel }}</div>
+                </div>
+              }
+              @if (day.entries.length > 4) {
+                <span class="text-xs text-surface-500 px-1">+{{ day.entries.length - 4 }} registros más</span>
+              }
             </div>
           </div>
-          <div class="flex gap-2">
-            <p-button label="Detener y guardar" icon="pi pi-stop" severity="danger" (onClick)="stopTimer()" />
-          </div>
-        </div>
-      } @else {
-        <div class="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
-          <p-select
-            [options]="issueOptions()"
-            optionLabel="label"
-            optionValue="value"
-            [ngModel]="selectedIssueId()"
-            (ngModelChange)="selectedIssueId.set($event)"
-            placeholder="Seleccionar incidencia"
-            class="w-full sm:w-80"
-          />
-          <p-button label="Iniciar cronómetro" icon="pi pi-play" severity="primary" (onClick)="startTimer()" />
+        }
+      </div>
+
+      @if (!visibleEntries().length && !loadingEntries()) {
+        <div class="p-8 text-center text-surface-500">
+          No hay registros de tiempo para el filtro seleccionado.
         </div>
       }
-    </div>
+    }
   </div>
 
-  <p-table [value]="entries()" [loading]="loadingEntries()" [tableStyle]="{ 'min-width': '48rem' }">
-    <ng-template #header>
-      <tr>
-        <th>Incidencia</th>
-        <th>Usuario</th>
-        <th>Tiempo</th>
-        <th>Nota</th>
-        <th>Fecha</th>
-      </tr>
+  <p-dialog
+    [visible]="showAddForm()"
+    (visibleChange)="!$event && closeAddTimeDialog()"
+    header="Añadir tiempo empleado"
+    [modal]="true"
+    [dismissableMask]="true"
+    [draggable]="false"
+    [resizable]="false"
+    [style]="{ width: 'min(94vw, 34rem)' }"
+  >
+    <div class="flex flex-col gap-4">
+      <label class="flex flex-col gap-1 text-sm">
+        <span class="text-surface-600 font-medium">Incidencia</span>
+        <p-select
+          [options]="issueOptions()"
+          optionLabel="label"
+          optionValue="value"
+          [ngModel]="selectedIssueId()"
+          (ngModelChange)="selectedIssueId.set($event)"
+          placeholder="Selecciona una opción"
+          class="w-full"
+          appendTo="body"
+        />
+      </label>
+
+      <div class="flex flex-col gap-1 text-sm">
+        <span class="text-surface-600 font-medium">Autor</span>
+        <span class="inline-flex w-fit items-center gap-2 rounded bg-primary-50 px-2 py-1 text-primary-800">
+          <span class="w-5 h-5 rounded bg-primary-100 inline-flex items-center justify-center text-[0.65rem] font-bold">
+            {{ currentAuthorName().slice(0, 1) }}
+          </span>
+          {{ currentAuthorName() }}
+        </span>
+      </div>
+
+      <div class="inline-flex w-fit rounded border border-surface-300 overflow-hidden text-sm">
+        <button
+          type="button"
+          class="px-3 py-1.5"
+          [class.bg-primary-600]="addTimeMode() === 'dates'"
+          [class.text-white]="addTimeMode() === 'dates'"
+          (click)="setAddTimeMode('dates')"
+        >
+          Fechas individuales
+        </button>
+        <button
+          type="button"
+          class="px-3 py-1.5 border-l border-surface-300"
+          [class.bg-primary-600]="addTimeMode() === 'range'"
+          [class.text-white]="addTimeMode() === 'range'"
+          (click)="setAddTimeMode('range')"
+        >
+          Rangos de fechas
+        </button>
+      </div>
+
+      @if (addTimeMode() === 'dates') {
+        <div class="flex flex-col gap-2">
+          @for (row of dateRows(); track row.id) {
+            <div class="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
+              <label class="flex flex-col gap-1 text-sm">
+                <span class="text-surface-600 font-medium">Fecha</span>
+                <input
+                  type="date"
+                  class="p-inputtext p-component w-full"
+                  [ngModel]="row.date"
+                  (ngModelChange)="updateDateRow(row.id, { date: $event })"
+                />
+              </label>
+              <label class="flex flex-col gap-1 text-sm">
+                <span class="text-surface-600 font-medium">Tiempo empleado</span>
+                <input
+                  class="p-inputtext p-component w-full"
+                  [ngModel]="row.timeText"
+                  (ngModelChange)="updateDateRow(row.id, { timeText: $event })"
+                  placeholder="Ej. 1h 30m"
+                />
+              </label>
+              <p-button
+                icon="pi pi-trash"
+                severity="danger"
+                text
+                size="small"
+                [disabled]="dateRows().length <= 1"
+                (onClick)="removeDateRow(row.id)"
+              />
+            </div>
+          }
+          <button type="button" class="text-left text-sm text-primary-600 font-medium" (click)="addDateRow()">
+            + Añadir otro registro
+          </button>
+        </div>
+      } @else {
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <label class="flex flex-col gap-1 text-sm">
+            <span class="text-surface-600 font-medium">Desde</span>
+            <input
+              type="date"
+              class="p-inputtext p-component w-full"
+              [ngModel]="rangeStartDate()"
+              (ngModelChange)="rangeStartDate.set($event)"
+            />
+          </label>
+          <label class="flex flex-col gap-1 text-sm">
+            <span class="text-surface-600 font-medium">Hasta</span>
+            <input
+              type="date"
+              class="p-inputtext p-component w-full"
+              [ngModel]="rangeEndDate()"
+              (ngModelChange)="rangeEndDate.set($event)"
+            />
+          </label>
+          <label class="flex flex-col gap-1 text-sm">
+            <span class="text-surface-600 font-medium">Tiempo por día</span>
+            <input
+              class="p-inputtext p-component w-full"
+              [ngModel]="rangeTimeText()"
+              (ngModelChange)="rangeTimeText.set($event)"
+              placeholder="Ej. 1h"
+            />
+          </label>
+        </div>
+      }
+
+      <label class="flex flex-col gap-1 text-sm">
+        <span class="text-surface-600 font-medium">Tipo</span>
+        <p-select
+          [options]="activityTypeOptions()"
+          optionLabel="label"
+          optionValue="value"
+          [ngModel]="activityType()"
+          (ngModelChange)="activityType.set($event)"
+          class="w-full"
+          appendTo="body"
+        />
+      </label>
+
+      <label class="flex flex-col gap-1 text-sm">
+        <span class="text-surface-600 font-medium">Descripción</span>
+        <textarea
+          class="p-inputtextarea p-inputtext p-component w-full min-h-24"
+          [ngModel]="manualNote()"
+          (ngModelChange)="manualNote.set($event)"
+          placeholder="Describe lo que ha hecho durante este tiempo."
+        ></textarea>
+      </label>
+
+      @if (entryError(); as err) {
+        <p class="text-sm text-red-600 m-0">{{ err }}</p>
+      }
+    </div>
+
+    <ng-template #footer>
+      <div class="flex justify-end gap-2">
+        <p-button label="Cancelar" severity="secondary" [outlined]="true" size="small" (onClick)="closeAddTimeDialog()" />
+        <p-button
+          label="Guardar"
+          icon="pi pi-check"
+          size="small"
+          [loading]="savingManualEntry()"
+          [disabled]="!selectedIssueId() || savingManualEntry()"
+          (onClick)="addManualEntry()"
+        />
+      </div>
     </ng-template>
-    <ng-template #body let-row>
-      <tr>
-        <td class="font-mono text-primary-600">{{ row.cardLabel }}</td>
-        <td>{{ workService.getMember(row.entry.memberId)?.name }}</td>
-        <td>{{ formatMinutes(row.entry.minutes) }}</td>
-        <td>{{ row.entry.note || '—' }}</td>
-        <td>{{ formatDate(row.entry.loggedAt) }}</td>
-      </tr>
-    </ng-template>
-    <ng-template #emptymessage>
-      <tr>
-        <td colspan="5" class="text-center text-surface-500 py-8">No hay registros de tiempo aún.</td>
-      </tr>
-    </ng-template>
-  </p-table>
+  </p-dialog>
 </div>

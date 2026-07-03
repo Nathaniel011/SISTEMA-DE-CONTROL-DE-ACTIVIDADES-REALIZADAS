@@ -14,7 +14,10 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.*;
@@ -259,7 +262,14 @@ public class WorkService {
                 entry.getId().toString(),
                 entry.getIssue().getId().toString(),
                 entry.getUser().getId().toString(),
+                entry.getIssue().getProject().getId().toString(),
+                entry.getIssue().getProject().getName(),
+                entry.getIssue().getProject().getKeyCode(),
+                entry.getIssue().getIssueNumber(),
+                entry.getIssue().getTitle(),
+                entry.getIssue().getIssueType(),
                 entry.getMinutes(),
+                entry.getActivityType(),
                 entry.getNote(),
                 entry.getLoggedAt().toString()
             ))
@@ -634,6 +644,8 @@ public class WorkService {
         entry.setUser(user);
         entry.setMinutes(req.minutes());
         entry.setNote(req.note());
+        entry.setLoggedAt(parseTimeEntryLoggedAt(req.loggedAt()));
+        entry.setActivityType(normalizeActivityType(req.activityType()));
         entry = timeEntryRepository.save(entry);
         issue.setTrackedMinutes(issue.getTrackedMinutes() + req.minutes());
         issueRepository.save(issue);
@@ -642,8 +654,30 @@ public class WorkService {
             user.getId().toString(),
             entry.getMinutes(),
             entry.getNote(),
-            entry.getLoggedAt().toString()
+            entry.getLoggedAt().toString(),
+            entry.getActivityType()
         );
+    }
+
+    private String normalizeActivityType(String value) {
+        if (value == null || value.isBlank()) {
+            return "Trabajo";
+        }
+        return value.trim();
+    }
+
+    private Instant parseTimeEntryLoggedAt(String value) {
+        if (value == null || value.isBlank()) {
+            return Instant.now();
+        }
+        try {
+            if (value.length() == 10) {
+                return LocalDate.parse(value).atTime(LocalTime.NOON).toInstant(ZoneOffset.UTC);
+            }
+            return Instant.parse(value);
+        } catch (DateTimeParseException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Fecha de registro inválida");
+        }
     }
 
     @Transactional
@@ -667,7 +701,12 @@ public class WorkService {
         ActiveTimer timer = activeTimerRepository.findById(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "No hay cronómetro activo"));
         long minutes = Math.max(1, (Instant.now().toEpochMilli() - timer.getStartedAt().toEpochMilli()) / 60000);
-        LogTimeRequest logReq = new LogTimeRequest((int) minutes, timer.getNote() != null ? timer.getNote() : "Cronómetro");
+        LogTimeRequest logReq = new LogTimeRequest(
+            (int) minutes,
+            timer.getNote() != null ? timer.getNote() : "Cronómetro",
+            null,
+            "Cronómetro"
+        );
         UUID issueId = timer.getIssue().getId();
         activeTimerRepository.delete(timer);
         return logTime(principal, issueId, logReq);
@@ -1438,7 +1477,8 @@ public class WorkService {
             t.getUser().getId().toString(),
             t.getMinutes(),
             t.getNote(),
-            t.getLoggedAt().toString()
+            t.getLoggedAt().toString(),
+            t.getActivityType()
         )).toList();
     }
 

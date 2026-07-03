@@ -23,6 +23,9 @@ public class TimeEntry {
     @Column(nullable = false)
     private int minutes;
 
+    @Column(name = "activity_type", nullable = false, length = 100)
+    private String activityType = "Trabajo";
+
     private String note;
 
     @Column(name = "logged_at", nullable = false)
@@ -35,7 +38,10 @@ public class TimeEntry {
     public void setUser(User user) { this.user = user; }
     public int getMinutes() { return minutes; }
     public void setMinutes(int minutes) { this.minutes = minutes; }
+    public String getActivityType() { return activityType; }
+    public void setActivityType(String activityType) { this.activityType = activityType; }
     public String getNote() { return note; }
     public void setNote(String note) { this.note = note; }
     public Instant getLoggedAt() { return loggedAt; }
+    public void setLoggedAt(Instant loggedAt) { this.loggedAt = loggedAt; }
 }
