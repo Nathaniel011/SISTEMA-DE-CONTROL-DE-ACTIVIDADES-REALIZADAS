@@ -125,6 +125,16 @@ public class PermissionService {
 
     public void requireMoveIssue(User user, Issue issue, IssueColumn newColumn) {
         requireAccessProject(user, issue.getProject());
+        if (isAdminOrChief(user) || isSecretary(user)) {
+            return;
+        }
+        if (issue.getAssignee() != null && issue.getAssignee().getId().equals(user.getId())) {
+            return;
+        }
+        if (issue.getCreatedBy() != null && issue.getCreatedBy().getId().equals(user.getId())) {
+            return;
+        }
+        throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No puede mover esta tarea");
     }
 
     public void requireDeleteIssue(User user, Issue issue) {

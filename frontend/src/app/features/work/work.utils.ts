@@ -21,12 +21,11 @@ export function resolveWorkFileUrl(url: string): string {
 }
 
 export function formatWorkMinutes(minutes: number): string {
-  const abs = Math.abs(minutes);
-  const h = Math.floor(abs / 60);
-  const m = abs % 60;
-  const sign = minutes < 0 ? '-' : '';
-  if (!h) return `${sign}${m}m`;
-  return m ? `${sign}${h}h ${m}m` : `${sign}${h}h`;
+  const safeMinutes = Math.max(0, minutes);
+  const h = Math.floor(safeMinutes / 60);
+  const m = safeMinutes % 60;
+  if (!h) return `${m}m`;
+  return m ? `${h}h ${m}m` : `${h}h`;
 }
 
 export function formatTimeOverrun(trackedMinutes: number, estimateMinutes: number | null): string | null {
@@ -98,7 +97,7 @@ export function isOverdue(iso: string | null): boolean {
 
 export function getTimeOverrunStatus(card: WorkCard): 'normal' | 'warning' | 'critical' {
   if (!card.estimateMinutes || card.estimateMinutes === 0) return 'normal';
-  const ratio = card.trackedMinutes / card.estimateMinutes;
+  const ratio = Math.max(0, card.trackedMinutes) / card.estimateMinutes;
   if (ratio >= 1) return 'critical';
   if (ratio >= 0.8) return 'warning';
   return 'normal';

@@ -2,6 +2,7 @@ package com.scar.api.web;
 
 import com.scar.api.domain.entity.Project;
 import com.scar.api.dto.CreateIssueRequest;
+import com.scar.api.repository.ProjectRepository;
 import com.scar.api.service.GeneralBoardService;
 import com.scar.api.service.WorkService;
 import jakarta.validation.Valid;
@@ -18,15 +19,18 @@ public class WebhookController {
 
     private final WorkService workService;
     private final GeneralBoardService generalBoardService;
+    private final ProjectRepository projectRepository;
     private final String emailWebhookSecret;
 
     public WebhookController(
         WorkService workService,
         GeneralBoardService generalBoardService,
+        ProjectRepository projectRepository,
         @Value("${scar.webhooks.email.secret:}") String emailWebhookSecret
     ) {
         this.workService = workService;
         this.generalBoardService = generalBoardService;
+        this.projectRepository = projectRepository;
         this.emailWebhookSecret = emailWebhookSecret;
     }
 
@@ -43,10 +47,12 @@ public class WebhookController {
         }
 
         try {
-            Project generalBoard = generalBoardService.ensureGeneralBoardExists();
+            Project targetBoard = resolveTargetBoard(request.boardId());
+
+            String description = buildDescription(request.body(), request.attachments());
 
             CreateIssueRequest createReq = new CreateIssueRequest(
-                generalBoard.getId().toString(),
+                targetBoard.getId().toString(),
                 request.subject(),
                 "registered",
                 null,
@@ -59,17 +65,39 @@ public class WebhookController {
             );
 
             var card = workService.createIssue(null, createReq);
-            if (request.body() != null && !request.body().isBlank()) {
-                card = workService.updateWebhookIssueDescription(UUID.fromString(card.id()), request.body());
+            if (description != null && !description.isBlank()) {
+                card = workService.updateWebhookIssueDescription(UUID.fromString(card.id()), description);
             }
-            
+
             return ResponseEntity.ok(new EmailTicketResponse(
                 card.id(),
                 "Ticket created successfully"
             ));
         } catch (Exception e) {
-            return ResponseEntity.internalServerError().body("Error creating ticket: " + e.getMessage());
+            return ResponseEntity.internalServerError().body("No se pudo crear el ticket");
         }
+    }
+
+    private Project resolveTargetBoard(String boardId) {
+        if (boardId != null && !boardId.isBlank()) {
+            return projectRepository.findById(UUID.fromString(boardId))
+                .orElseGet(generalBoardService::ensureGeneralBoardExists);
+        }
+        return generalBoardService.ensureGeneralBoardExists();
+    }
+
+    private String buildDescription(String body, java.util.List<String> attachments) {
+        StringBuilder description = new StringBuilder(body != null ? body : "");
+        if (attachments != null && !attachments.isEmpty()) {
+            if (!description.isEmpty()) {
+                description.append("\n\n");
+            }
+            description.append("Adjuntos:\n");
+            attachments.stream()
+                .filter(a -> a != null && !a.isBlank())
+                .forEach(a -> description.append("- ").append(a.trim()).append('\n'));
+        }
+        return description.toString().trim();
     }
 
     public record EmailTicketRequest(

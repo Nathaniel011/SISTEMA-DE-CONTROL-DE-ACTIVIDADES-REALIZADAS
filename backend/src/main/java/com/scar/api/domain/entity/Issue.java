@@ -86,9 +86,8 @@ public class Issue {
     @JoinColumn(name = "parent_issue_id")
     private Issue parentIssue;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "issue_type")
-    private IssueType issueType = IssueType.FEATURE;
+    @Column(name = "issue_type", length = 100)
+    private String issueType;
 
     @Column(columnDefinition = "TEXT")
     private String observations;
@@ -160,8 +159,8 @@ public class Issue {
     public void setBoardList(BoardList boardList) { this.boardList = boardList; }
     public Issue getParentIssue() { return parentIssue; }
     public void setParentIssue(Issue parentIssue) { this.parentIssue = parentIssue; }
-    public IssueType getIssueType() { return issueType; }
-    public void setIssueType(IssueType issueType) { this.issueType = issueType; }
+    public String getIssueType() { return issueType; }
+    public void setIssueType(String issueType) { this.issueType = issueType; }
     public String getObservations() { return observations; }
     public void setObservations(String observations) { this.observations = observations; }
     public User getCreatedBy() { return createdBy; }

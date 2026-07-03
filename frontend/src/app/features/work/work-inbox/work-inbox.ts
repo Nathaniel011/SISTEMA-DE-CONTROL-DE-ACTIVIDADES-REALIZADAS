@@ -1,4 +1,4 @@
-import {ChangeDetectionStrategy, Component, computed, inject, signal} from '@angular/core';
+import {ChangeDetectionStrategy, Component, computed, effect, inject, signal} from '@angular/core';
 import {toSignal} from '@angular/core/rxjs-interop';
 import {ActivatedRoute, Router, RouterLink} from '@angular/router';
 import {map} from 'rxjs';
@@ -19,6 +19,7 @@ import {
   getTimeOverrunStatus,
   getTimeOverrunColor,
   boardDisplayName,
+  WORK_DRAFT_CARD_TITLE,
 } from '../work.utils';
 import {WorkCardDrawer} from '../work-card-drawer/work-card-drawer';
 
@@ -57,6 +58,7 @@ export class WorkInbox {
   assigneeFilter = signal<string | null>(null);
   selectedCardId = signal<string | null>(null);
   drawerOpen = signal(false);
+  createError = signal<string | null>(null);
   showAssignDialog = signal(false);
   assigningCardId = signal<string | null>(null);
   selectedBoardId = signal<string | null>(null);
@@ -92,6 +94,15 @@ export class WorkInbox {
     ...this.workService.members().map(m => ({ label: m.name, value: m.id })),
   ]);
 
+  constructor() {
+    effect(() => {
+      const generalId = this.workService.getGeneralBoardId();
+      if (generalId) {
+        void this.workService.ensureBoardCards(generalId);
+      }
+    });
+  }
+
   cardsForColumn(columnId: WorkColumnId): WorkCard[] {
     const generalId = this.workService.getGeneralBoardId();
     let cards = this.workService.cards();
@@ -101,6 +112,10 @@ export class WorkInbox {
     }
 
     cards = cards.filter(c => c.columnId === columnId);
+    const selectedId = this.selectedCardId();
+    cards = cards.filter(
+      c => c.title !== WORK_DRAFT_CARD_TITLE || c.id === selectedId
+    );
 
     const query = this.search().trim().toLowerCase();
     if (query) {
@@ -127,6 +142,7 @@ export class WorkInbox {
   async openCreateCard(columnId: WorkColumnId): Promise<void> {
     const generalId = this.workService.getGeneralBoardId();
     if (!generalId) return;
+    this.createError.set(null);
     try {
       const card = await this.workService.createDraftCard({
         boardId: generalId,
@@ -136,7 +152,7 @@ export class WorkInbox {
       this.selectedCardId.set(card.id);
       this.drawerOpen.set(true);
     } catch {
-      // Sin feedback dedicado; el usuario puede reintentar.
+      this.createError.set('No se pudo crear la tarjeta. Inténtalo de nuevo.');
     }
   }
 

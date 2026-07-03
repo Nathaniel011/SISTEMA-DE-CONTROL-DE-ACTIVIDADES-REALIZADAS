@@ -6,16 +6,22 @@ import {resolveWorkFileUrl} from '../../features/work/work.utils';
 @Injectable({ providedIn: 'root' })
 export class FileAccessService implements OnDestroy {
   private http = inject(HttpClient);
+  private readonly maxCachedFiles = 30;
   private cache = new Map<string, string>();
 
   async getBlobUrl(fileUrl: string): Promise<string> {
     const resolved = resolveWorkFileUrl(fileUrl);
     const cached = this.cache.get(resolved);
-    if (cached) return cached;
+    if (cached) {
+      this.cache.delete(resolved);
+      this.cache.set(resolved, cached);
+      return cached;
+    }
 
     const blob = await firstValueFrom(this.http.get(resolved, { responseType: 'blob' }));
     const objectUrl = URL.createObjectURL(blob);
     this.cache.set(resolved, objectUrl);
+    this.trimCache();
     return objectUrl;
   }
 
@@ -35,6 +41,16 @@ export class FileAccessService implements OnDestroy {
     if (!cached) return;
     URL.revokeObjectURL(cached);
     this.cache.delete(resolved);
+  }
+
+  private trimCache(): void {
+    while (this.cache.size > this.maxCachedFiles) {
+      const oldest = this.cache.keys().next().value;
+      if (!oldest) return;
+      const url = this.cache.get(oldest);
+      if (url) URL.revokeObjectURL(url);
+      this.cache.delete(oldest);
+    }
   }
 
   ngOnDestroy(): void {

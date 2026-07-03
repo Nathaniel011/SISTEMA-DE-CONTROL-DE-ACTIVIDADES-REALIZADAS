@@ -1,4 +1,5 @@
-import {Component, computed, inject} from '@angular/core';
+import {Component, computed, inject, OnInit, signal} from '@angular/core';
+import {FormsModule} from '@angular/forms';
 import {RouterLink} from '@angular/router';
 import {Button} from 'primeng/button';
 import {ChartModule} from 'primeng/chart';
@@ -7,13 +8,23 @@ import {formatWorkMinutes} from '../work.utils';
 
 @Component({
   selector: 'app-work-dashboards',
-  imports: [RouterLink, Button, ChartModule],
+  imports: [FormsModule, RouterLink, Button, ChartModule],
   templateUrl: './work-dashboards.html',
 })
-export class WorkDashboards {
+export class WorkDashboards implements OnInit {
   workService = inject(WorkService);
 
-  metrics = computed(() => this.workService.getDashboardMetrics());
+  loadError = signal<string | null>(null);
+  startDate = signal('');
+  endDate = signal('');
+
+  metrics = computed(() => {
+    const apiMetrics = this.workService.dashboardMetrics();
+    if (apiMetrics) {
+      return apiMetrics;
+    }
+    return this.workService.getDashboardMetrics();
+  });
 
   statusChart = computed(() => {
     const data = this.metrics().byStatus;
@@ -49,4 +60,24 @@ export class WorkDashboards {
   };
 
   formatMinutes = formatWorkMinutes;
+
+  ngOnInit(): void {
+    void this.reloadDashboard();
+  }
+
+  async reloadDashboard(): Promise<void> {
+    this.loadError.set(null);
+    await this.workService.loadDashboard({
+      startDate: this.startDate() || undefined,
+      endDate: this.endDate() || undefined,
+    }).catch(() => {
+      this.loadError.set('No se pudieron cargar las métricas del panel.');
+    });
+  }
+
+  clearFilters(): void {
+    this.startDate.set('');
+    this.endDate.set('');
+    void this.reloadDashboard();
+  }
 }

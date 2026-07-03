@@ -205,32 +205,7 @@
             </div>
 
             <div class="work-card-field">
-              <span class="work-card-field-label">Fecha límite</span>
-              <p-datepicker
-                [ngModel]="dueDateDraft()"
-                (ngModelChange)="dueDateDraft.set($event)"
-                [showIcon]="true"
-                [showClear]="true"
-                appendTo="body"
-                dateFormat="dd/mm/yy"
-                styleClass="w-full"
-              />
-            </div>
-
-            <div class="work-card-field">
-              <span class="work-card-field-label">Estimación</span>
-              <p-inputnumber
-                [ngModel]="estimateMinutesDraft()"
-                (ngModelChange)="estimateMinutesDraft.set($event ?? null)"
-                [min]="0"
-                [step]="30"
-                suffix=" min"
-                styleClass="w-full"
-              />
-            </div>
-
-            <div class="work-card-field">
-              <span class="work-card-field-label">Inicio (Gantt)</span>
+              <span class="work-card-field-label">Inicio</span>
               <p-datepicker
                 [ngModel]="startDateDraft()"
                 (ngModelChange)="startDateDraft.set($event)"
@@ -243,7 +218,7 @@
             </div>
 
             <div class="work-card-field">
-              <span class="work-card-field-label">Fin (Gantt)</span>
+              <span class="work-card-field-label">Fin</span>
               <p-datepicker
                 [ngModel]="endDateDraft()"
                 (ngModelChange)="endDateDraft.set($event)"
@@ -257,14 +232,12 @@
 
             <div class="work-card-field">
               <span class="work-card-field-label">Tipo de tarea</span>
-              <p-select
-                [options]="issueTypeOptions"
-                optionLabel="label"
-                optionValue="value"
+              <input
+                pInputText
+                class="w-full"
                 [ngModel]="issueTypeDraft()"
                 (ngModelChange)="issueTypeDraft.set($event)"
-                class="w-full"
-                appendTo="body"
+                placeholder="Ej. Análisis, Despliegue, QA…"
               />
             </div>
 
@@ -282,18 +255,7 @@
 
             <div class="work-card-field">
               <span class="work-card-field-label">Tiempo</span>
-              <span class="work-card-field-value">
-                {{ formatMinutes(c.trackedMinutes) }}
-                @if (c.estimateMinutes) {
-                  <span class="text-surface-400"> / {{ formatMinutes(c.estimateMinutes) }}</span>
-                }
-              </span>
-              @if (formatTimeRemaining(c.trackedMinutes, c.estimateMinutes); as remaining) {
-                <span class="text-xs text-surface-500">{{ remaining }}</span>
-              }
-              @if (formatTimeOverrun(c.trackedMinutes, c.estimateMinutes); as overrun) {
-                <span class="text-xs text-red-600 font-medium">{{ overrun }}</span>
-              }
+              <span class="work-card-field-value">{{ formatMinutes(c.trackedMinutes) }}</span>
             </div>
           </div>
 

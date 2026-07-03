@@ -30,6 +30,8 @@ public interface IssueRepository extends JpaRepository<Issue, UUID> {
 
     List<Issue> findByProjectIdAndColumnIdOrderBySortOrder(UUID projectId, IssueColumn columnId);
 
+    long countByProjectIdAndColumnId(UUID projectId, IssueColumn columnId);
+
     long countByProjectIdAndBoardListId(UUID projectId, UUID boardListId);
 
     List<Issue> findByParentIssueId(UUID parentIssueId);

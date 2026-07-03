@@ -41,6 +41,7 @@ public class WorkService {
     private final PermissionService permissionService;
     private final GeneralBoardService generalBoardService;
     private final WeeklyPlanExcelService weeklyPlanExcelService;
+    private final ActivityLogService activityLogService;
 
     @Value("${scar.upload.dir:./uploads}")
     private String uploadDir;
@@ -58,7 +59,8 @@ public class WorkService {
         BoardListRepository boardListRepository,
         PermissionService permissionService,
         GeneralBoardService generalBoardService,
-        WeeklyPlanExcelService weeklyPlanExcelService
+        WeeklyPlanExcelService weeklyPlanExcelService,
+        ActivityLogService activityLogService
     ) {
         this.projectRepository = projectRepository;
         this.issueRepository = issueRepository;
@@ -73,10 +75,16 @@ public class WorkService {
         this.permissionService = permissionService;
         this.generalBoardService = generalBoardService;
         this.weeklyPlanExcelService = weeklyPlanExcelService;
+        this.activityLogService = activityLogService;
     }
 
     @Transactional(readOnly = true)
     public WorkBootstrapDto bootstrap(ScarPrincipal principal) {
+        return bootstrap(principal, "all", null);
+    }
+
+    @Transactional(readOnly = true)
+    public WorkBootstrapDto bootstrap(ScarPrincipal principal, String cardsMode, UUID boardId) {
         User currentUser = userRepository.findByIdWithRoles(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
 
@@ -87,13 +95,13 @@ public class WorkService {
             .toList();
         Set<UUID> accessibleProjectIds = projects.stream().map(Project::getId).collect(Collectors.toSet());
 
-        List<Issue> issues = accessibleProjectIds.isEmpty()
-            ? List.of()
-            : issueRepository.findByProjectIdIn(accessibleProjectIds);
+        List<Issue> issues = resolveBootstrapIssues(currentUser, cardsMode, boardId, accessibleProjectIds);
         List<BoardList> boardLists = boardListRepository
             .findByProjectIdInAndArchivedFalseOrderBySortOrderAsc(accessibleProjectIds);
 
-        Map<UUID, List<IssueComment>> commentsByIssue = loadComments(issues);
+        Map<UUID, List<IssueComment>> commentsByIssue = issues.isEmpty()
+            ? Map.of()
+            : loadComments(issues);
 
         WorkBootstrapDto.ActiveTimerDto timerDto = activeTimerRepository.findById(principal.userId())
             .map(t -> new WorkBootstrapDto.ActiveTimerDto(
@@ -110,6 +118,128 @@ public class WorkService {
             members.stream().map(this::toMember).toList(),
             timerDto
         );
+    }
+
+    @Transactional(readOnly = true)
+    public List<WorkBootstrapDto.CardDto> getProjectCards(ScarPrincipal principal, UUID projectId) {
+        User currentUser = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+        Project project = projectRepository.findById(projectId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Proyecto no encontrado"));
+        permissionService.requireAccessProject(currentUser, project);
+
+        List<Issue> issues = issueRepository.findByProjectId(projectId);
+        Map<UUID, List<IssueComment>> commentsByIssue = loadComments(issues);
+        return issues.stream().map(i -> toCardSummary(i, commentsByIssue)).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public DashboardDto getDashboard(ScarPrincipal principal, UUID projectId, String startDate, String endDate) {
+        User currentUser = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+        Set<UUID> accessibleProjectIds = projectRepository.findAllWithMembers().stream()
+            .filter(project -> permissionService.canAccessProject(currentUser, project))
+            .map(Project::getId)
+            .collect(Collectors.toSet());
+
+        LocalDate start = parseReportDate(startDate);
+        LocalDate end = parseReportDate(endDate);
+        List<Issue> issues;
+        Set<UUID> dashboardProjectIds;
+        if (projectId != null) {
+            Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Proyecto no encontrado"));
+            permissionService.requireAccessProject(currentUser, project);
+            issues = issueRepository.findByProjectId(projectId);
+            dashboardProjectIds = Set.of(projectId);
+        } else if (accessibleProjectIds.isEmpty()) {
+            issues = List.of();
+            dashboardProjectIds = Set.of();
+        } else {
+            issues = issueRepository.findByProjectIdIn(accessibleProjectIds);
+            dashboardProjectIds = accessibleProjectIds;
+        }
+        issues = issues.stream()
+            .filter(issue -> issueMatchesReportRange(issue, start, end))
+            .toList();
+
+        int total = issues.size();
+        int open = (int) issues.stream()
+            .filter(i -> i.getColumnId() != IssueColumn.done && i.getColumnId() != IssueColumn.closed)
+            .count();
+        int inProgress = (int) issues.stream()
+            .filter(i -> i.getColumnId() == IssueColumn.in_progress || i.getColumnId() == IssueColumn.review)
+            .count();
+        int done = (int) issues.stream()
+            .filter(i -> i.getColumnId() == IssueColumn.done || i.getColumnId() == IssueColumn.closed)
+            .count();
+        int unassigned = (int) issues.stream().filter(i -> i.getAssignee() == null).count();
+        int critical = (int) issues.stream().filter(i -> i.getPriority() == IssuePriority.critical).count();
+        int trackedMinutes = (start != null || end != null)
+            ? loadTrackedMinutesForDashboard(dashboardProjectIds, start, end)
+            : issues.stream().mapToInt(Issue::getTrackedMinutes).sum();
+
+        int pending = (int) issues.stream()
+            .filter(i -> i.getColumnId() == IssueColumn.backlog || i.getColumnId() == IssueColumn.todo)
+            .count();
+        int high = (int) issues.stream().filter(i -> i.getPriority() == IssuePriority.high).count();
+        int normal = (int) issues.stream()
+            .filter(i -> i.getPriority() == IssuePriority.medium || i.getPriority() == IssuePriority.low)
+            .count();
+
+        return new DashboardDto(
+            total,
+            open,
+            inProgress,
+            done,
+            unassigned,
+            critical,
+            trackedMinutes,
+            List.of(
+                new DashboardDto.ChartItemDto("Pendiente", pending),
+                new DashboardDto.ChartItemDto("En curso", inProgress),
+                new DashboardDto.ChartItemDto("Hecho", done)
+            ),
+            List.of(
+                new DashboardDto.ChartItemDto("Crítico", critical),
+                new DashboardDto.ChartItemDto("Mayor", high),
+                new DashboardDto.ChartItemDto("Normal", normal)
+            )
+        );
+    }
+
+    private int loadTrackedMinutesForDashboard(Set<UUID> projectIds, LocalDate start, LocalDate end) {
+        if (projectIds.isEmpty()) {
+            return 0;
+        }
+        return timeEntryRepository.findByProjectIdIn(projectIds).stream()
+            .filter(entry -> timeEntryMatchesReportRange(entry, start, end))
+            .mapToInt(TimeEntry::getMinutes)
+            .sum();
+    }
+
+    private List<Issue> resolveBootstrapIssues(
+        User currentUser,
+        String cardsMode,
+        UUID boardId,
+        Set<UUID> accessibleProjectIds
+    ) {
+        if ("none".equalsIgnoreCase(cardsMode)) {
+            return List.of();
+        }
+        if ("board".equalsIgnoreCase(cardsMode)) {
+            if (boardId == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "boardId es obligatorio cuando cards=board");
+            }
+            Project project = projectRepository.findById(boardId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Proyecto no encontrado"));
+            permissionService.requireAccessProject(currentUser, project);
+            return issueRepository.findByProjectId(boardId);
+        }
+        if (accessibleProjectIds.isEmpty()) {
+            return List.of();
+        }
+        return issueRepository.findByProjectIdIn(accessibleProjectIds);
     }
 
     @Transactional(readOnly = true)
@@ -143,7 +273,7 @@ public class WorkService {
         Issue issue = loadIssue(issueId);
         permissionService.requireAccessProject(currentUser, issue.getProject());
         return new IssueDetailsDto(
-            mapComments(commentRepository.findByIssueIdOrderByCreatedAtAsc(issueId)),
+            mapComments(commentRepository.findByIssueIdWithAuthorOrderByCreatedAtAsc(issueId)),
             mapTimeEntries(timeEntryRepository.findByIssueIdOrderByLoggedAtDesc(issueId)),
             mapAttachments(attachmentRepository.findByIssueIdOrderByCreatedAtDesc(issueId))
         );
@@ -257,9 +387,21 @@ public class WorkService {
         permissionService.requireUpdateIssue(currentUser, issue, req.assigneeId());
         IssueColumn oldColumn = issue.getColumnId();
 
-        if (req.title() != null) issue.setTitle(req.title().trim());
-        if (req.description() != null) issue.setDescription(req.description());
-        if (req.columnId() != null) issue.setColumnId(IssueColumn.valueOf(req.columnId()));
+        if (req.title() != null && !req.title().trim().equals(issue.getTitle())) {
+            activityLogService.log(issue, currentUser, "title", issue.getTitle(), req.title().trim());
+            issue.setTitle(req.title().trim());
+        }
+        if (req.description() != null && !Objects.equals(req.description(), issue.getDescription())) {
+            activityLogService.log(issue, currentUser, "description", issue.getDescription(), req.description());
+            issue.setDescription(req.description());
+        }
+        if (req.columnId() != null) {
+            IssueColumn newColumn = IssueColumn.valueOf(req.columnId());
+            if (!newColumn.equals(issue.getColumnId())) {
+                activityLogService.log(issue, currentUser, "column", issue.getColumnId().name(), newColumn.name());
+            }
+            issue.setColumnId(newColumn);
+        }
         if (req.boardListId() != null && !req.boardListId().isBlank()) {
             BoardList list = boardListRepository.findByIdAndProjectId(
                 UUID.fromString(req.boardListId()), issue.getProject().getId()
@@ -268,7 +410,12 @@ public class WorkService {
             issue.setColumnId(mapColumnFromList(list));
             applyCompletionFromList(issue, list, oldColumn);
         }
-        if (req.priority() != null) issue.setPriority(IssuePriority.valueOf(req.priority()));
+        if (req.priority() != null) {
+            if (!req.priority().equals(issue.getPriority().name())) {
+                activityLogService.log(issue, currentUser, "priority", issue.getPriority().name(), req.priority());
+            }
+            issue.setPriority(IssuePriority.valueOf(req.priority()));
+        }
         if (req.assigneeId() != null) {
             if (!req.assigneeId().isBlank() && !permissionService.canAssignTasks(currentUser)) {
                 UUID assigneeId = UUID.fromString(req.assigneeId());
@@ -285,6 +432,12 @@ public class WorkService {
             User oldAssignee = issue.getAssignee();
 
             issue.setAssignee(newAssignee);
+
+            String oldAssigneeLabel = oldAssignee != null ? oldAssignee.getFullName() : null;
+            String newAssigneeLabel = newAssignee != null ? newAssignee.getFullName() : null;
+            if (!Objects.equals(oldAssigneeLabel, newAssigneeLabel)) {
+                activityLogService.log(issue, currentUser, "assignee", oldAssigneeLabel, newAssigneeLabel);
+            }
 
             if (newAssignee != null && (oldAssignee == null || !oldAssignee.getId().equals(newAssignee.getId()))) {
                 issue.setAssignedAt(Instant.now());
@@ -307,8 +460,12 @@ public class WorkService {
         if (req.endDate() != null) {
             issue.setEndDate(req.endDate().isBlank() ? null : LocalDate.parse(req.endDate()));
         }
-        if (req.issueType() != null && !req.issueType().isBlank()) {
-            issue.setIssueType(IssueType.valueOf(req.issueType().trim().toUpperCase(Locale.ROOT)));
+        if (req.issueType() != null) {
+            String newType = req.issueType().isBlank() ? null : req.issueType().trim();
+            if (!Objects.equals(issue.getIssueType(), newType)) {
+                activityLogService.log(issue, currentUser, "issue_type", issue.getIssueType(), newType);
+            }
+            issue.setIssueType(newType);
         }
         if (req.observations() != null) {
             issue.setObservations(req.observations().isBlank() ? null : req.observations().trim());
@@ -385,6 +542,7 @@ public class WorkService {
             issue = issueRepository.save(issue);
 
             if (!oldColumn.equals(newColumn)) {
+                activityLogService.log(issue, user, "column", oldColumn.name(), newColumn.name());
                 notificationService.notifyStatusChange(issue, principal.userId(), oldColumn.name(), newColumn.name());
             }
             return toCardLight(issue);
@@ -402,9 +560,9 @@ public class WorkService {
         issue = issueRepository.save(issue);
 
         if (!oldColumn.equals(newColumn)) {
+            activityLogService.log(issue, user, "column", oldColumn.name(), newColumn.name());
             notificationService.notifyStatusChange(issue, principal.userId(), oldColumn.name(), newColumn.name());
         }
-
         return toCardLight(issue);
     }
 
@@ -780,6 +938,10 @@ public class WorkService {
             .map(Project::getId)
             .collect(Collectors.toSet());
 
+        Map<UUID, Project> projectsById = projectRepository.findAllWithMembers().stream()
+            .filter(project -> projectIds.contains(project.getId()))
+            .collect(Collectors.toMap(Project::getId, project -> project, (a, b) -> a));
+
         if (projectIds.isEmpty()) {
             return new WeeklyPlanDto(weekStart.toString(), weekEnd.toString(), groupedByProject, List.of());
         }
@@ -813,11 +975,11 @@ public class WorkService {
                     issue.getProject().getKeyCode() + "-" + issue.getIssueNumber(),
                     issue.getProject().getName(),
                     issue.getTitle(),
-                    resolveMembersLabel(issue),
+                    resolveMembersLabel(issue, projectsById),
                     spanishDayName(overlapStart),
                     spanishDayName(overlapEnd),
                     priorityLabel(issue.getPriority()),
-                    issue.getIssueType() != null ? issue.getIssueType().label() : IssueType.FEATURE.label(),
+                    issue.getIssueType() != null ? issue.getIssueType() : "",
                     issue.getObservations() != null && !issue.getObservations().isBlank()
                         ? issue.getObservations()
                         : (issue.getDescription() != null ? issue.getDescription() : "")
@@ -1071,12 +1233,13 @@ public class WorkService {
         User currentUser = userRepository.findByIdWithRoles(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         permissionService.requireManageBoardMembers(currentUser);
-        return updateProjectMembersInternal(projectId, request);
+        return updateProjectMembersInternal(projectId, request, currentUser);
     }
 
-    private WorkBootstrapDto.BoardDto updateProjectMembersInternal(UUID projectId, UpdateProjectMembersRequest request) {
+    private WorkBootstrapDto.BoardDto updateProjectMembersInternal(UUID projectId, UpdateProjectMembersRequest request, User currentUser) {
         Project project = projectRepository.findById(projectId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Proyecto no encontrado"));
+        permissionService.requireAccessProject(currentUser, project);
 
         for (UpdateProjectMembersRequest.MemberAction action : request.actions()) {
             User user = userRepository.findById(UUID.fromString(action.userId()))
@@ -1105,7 +1268,7 @@ public class WorkService {
     }
 
     private int nextIssueOrder(UUID projectId, IssueColumn column) {
-        return issueRepository.findByProjectIdAndColumnIdOrderBySortOrder(projectId, column).size();
+        return (int) issueRepository.countByProjectIdAndColumnId(projectId, column);
     }
 
     private int nextIssueListOrder(UUID projectId, UUID listId) {
@@ -1334,7 +1497,7 @@ public class WorkService {
             parentId,
             issue.getEstimateMinutes(),
             issue.getPriority().name(),
-            issue.getIssueType() != null ? issue.getIssueType().name() : IssueType.FEATURE.name(),
+            issue.getIssueType() != null ? issue.getIssueType() : "",
             project.getName(),
             issue.getObservations(),
             hasChildren,
@@ -1381,10 +1544,16 @@ public class WorkService {
     }
 
     private String resolveMembersLabel(Issue issue) {
+        return resolveMembersLabel(issue, null);
+    }
+
+    private String resolveMembersLabel(Issue issue, Map<UUID, Project> projectsById) {
         if (issue.getAssignee() != null) {
             return issue.getAssignee().getFullName();
         }
-        Project project = issue.getProject();
+        Project project = projectsById != null
+            ? projectsById.getOrDefault(issue.getProject().getId(), issue.getProject())
+            : issue.getProject();
         if (project.getMembers() != null && !project.getMembers().isEmpty()) {
             return project.getMembers().stream()
                 .map(User::getFullName)
@@ -1392,6 +1561,11 @@ public class WorkService {
                 .collect(Collectors.joining(", "));
         }
         return "Sin asignar";
+    }
+
+    private String publicTokenValue(Issue issue) {
+        UUID token = issue.getPublicToken();
+        return token != null ? token.toString() : null;
     }
 
     private LocalDate clampToBusinessDay(LocalDate date) {
@@ -1438,7 +1612,7 @@ public class WorkService {
     }
 
     private String issueTypeValue(Issue issue) {
-        return issue.getIssueType() != null ? issue.getIssueType().name() : IssueType.FEATURE.name();
+        return issue.getIssueType() != null ? issue.getIssueType() : "";
     }
 
     private WorkBootstrapDto.CardDto toCardSummary(
@@ -1471,7 +1645,7 @@ public class WorkService {
             i.getRequesterPhone(),
             i.getRequesterEmail(),
             i.getReceptionChannel(),
-            null,
+            publicTokenValue(i),
             i.getStartDate() != null ? i.getStartDate().toString() : null,
             i.getEndDate() != null ? i.getEndDate().toString() : null,
             issueTypeValue(i),
@@ -1541,7 +1715,7 @@ public class WorkService {
             i.getRequesterPhone(),
             i.getRequesterEmail(),
             i.getReceptionChannel(),
-            null,
+            publicTokenValue(i),
             i.getStartDate() != null ? i.getStartDate().toString() : null,
             i.getEndDate() != null ? i.getEndDate().toString() : null,
             issueTypeValue(i),
@@ -1566,7 +1740,7 @@ public class WorkService {
             i.getDueDate() != null ? i.getDueDate().toString() : null,
             i.getEstimateMinutes(),
             i.getTrackedMinutes(),
-            mapComments(commentRepository.findByIssueIdOrderByCreatedAtAsc(issueId)),
+            mapComments(commentRepository.findByIssueIdWithAuthorOrderByCreatedAtAsc(issueId)),
             mapTimeEntries(timeEntryRepository.findByIssueIdOrderByLoggedAtDesc(issueId)),
             i.getSortOrder(),
             i.getCreatedAt().toString(),
@@ -1577,7 +1751,7 @@ public class WorkService {
             i.getRequesterPhone(),
             i.getRequesterEmail(),
             i.getReceptionChannel(),
-            null,
+            publicTokenValue(i),
             i.getStartDate() != null ? i.getStartDate().toString() : null,
             i.getEndDate() != null ? i.getEndDate().toString() : null,
             issueTypeValue(i),

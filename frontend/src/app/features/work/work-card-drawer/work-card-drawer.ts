@@ -13,12 +13,10 @@ import {Tag} from 'primeng/tag';
 import {WorkService} from '../../../core/services/work.service';
 import {WorkCardDetailStore} from '../../../core/services/work-card-detail.store';
 import {PermissionsService} from '../../../core/services/permissions.service';
-import {WORK_ISSUE_TYPE_OPTIONS, WORK_PRIORITIES, WORK_STATUS_LABELS, WorkCard, WorkIssueType} from '../work.models';
+import {WORK_PRIORITIES, WORK_STATUS_LABELS, WorkCard} from '../work.models';
 import {
   formatWorkDate,
   formatWorkMinutes,
-  formatTimeOverrun,
-  formatTimeRemaining,
   parseWorkDate,
   formatWorkDateISO,
   priorityMeta,
@@ -39,7 +37,6 @@ import {WorkCardTimePanel} from '../work-card-time-panel/work-card-time-panel';
     Textarea,
     Select,
     DatePicker,
-    InputNumber,
     Avatar,
     Tag,
     WorkCardAttachments,
@@ -65,14 +62,12 @@ export class WorkCardDrawer {
 
   titleDraft = signal('');
   descriptionDraft = signal('');
-  dueDateDraft = signal<Date | null>(null);
   priorityDraft = signal<WorkCard['priority']>('medium');
   assigneeIdDraft = signal<string | null>(null);
   boardListIdDraft = signal<string | null>(null);
-  estimateMinutesDraft = signal<number | null>(null);
   startDateDraft = signal<Date | null>(null);
   endDateDraft = signal<Date | null>(null);
-  issueTypeDraft = signal<WorkIssueType>('FEATURE');
+  issueTypeDraft = signal('');
   observationsDraft = signal('');
   saving = signal(false);
   saveError = signal<string | null>(null);
@@ -153,31 +148,27 @@ export class WorkCardDrawer {
   });
 
   priorityOptions = WORK_PRIORITIES.map(p => ({ label: p.label, value: p.value }));
-  issueTypeOptions = WORK_ISSUE_TYPE_OPTIONS;
   canDelete = computed(() => this.workService.canDeleteIssues() && !!this.cardId());
 
   hasUnsavedChanges = computed(() => {
     const c = this.card();
     if (!c) return false;
 
-    const dueIso = this.dueDateDraft() ? formatWorkDateISO(this.dueDateDraft()!) : null;
-    const savedDue = c.dueDate ?? null;
     const startIso = this.startDateDraft() ? formatWorkDateISO(this.startDateDraft()!) : null;
     const endIso = this.endDateDraft() ? formatWorkDateISO(this.endDateDraft()!) : null;
     const title = this.normalizedTitleDraft(c);
+    const issueType = this.issueTypeDraft().trim();
 
     return (
       title !== c.title ||
       this.descriptionDraft().trim() !== (c.description ?? '').trim() ||
-      dueIso !== savedDue ||
       startIso !== (c.startDate ?? null) ||
       endIso !== (c.endDate ?? null) ||
-      this.issueTypeDraft() !== (c.issueType ?? 'FEATURE') ||
+      issueType !== (c.issueType ?? '').trim() ||
       this.observationsDraft().trim() !== (c.observations ?? '').trim() ||
       this.priorityDraft() !== c.priority ||
       this.assigneeIdDraft() !== (c.assigneeId ?? null) ||
-      this.boardListIdDraft() !== (c.boardListId ?? null) ||
-      this.estimateMinutesDraft() !== (c.estimateMinutes ?? null)
+      this.boardListIdDraft() !== (c.boardListId ?? null)
     );
   });
 
@@ -229,14 +220,12 @@ export class WorkCardDrawer {
   private loadDraftsFromCard(c: WorkCard): void {
     this.titleDraft.set(c.title === WORK_DRAFT_CARD_TITLE ? '' : c.title);
     this.descriptionDraft.set(c.description ?? '');
-    this.dueDateDraft.set(parseWorkDate(c.dueDate));
     this.priorityDraft.set(c.priority);
     this.assigneeIdDraft.set(c.assigneeId ?? null);
     this.boardListIdDraft.set(c.boardListId ?? null);
-    this.estimateMinutesDraft.set(c.estimateMinutes ?? null);
     this.startDateDraft.set(parseWorkDate(c.startDate));
     this.endDateDraft.set(parseWorkDate(c.endDate));
-    this.issueTypeDraft.set(c.issueType ?? 'FEATURE');
+    this.issueTypeDraft.set(c.issueType ?? '');
     this.observationsDraft.set(c.observations ?? '');
     this.saveError.set(null);
   }
@@ -254,18 +243,17 @@ export class WorkCardDrawer {
 
     if (!this.isDraftCard() && !this.hasUnsavedChanges()) return;
 
-    const dueIso = this.dueDateDraft() ? formatWorkDateISO(this.dueDateDraft()!) : null;
     const startIso = this.startDateDraft() ? formatWorkDateISO(this.startDateDraft()!) : null;
     const endIso = this.endDateDraft() ? formatWorkDateISO(this.endDateDraft()!) : null;
     const description = this.descriptionDraft().trim();
+    const issueType = this.issueTypeDraft().trim();
     const patch: Partial<WorkCard> = {};
 
     if (title !== c.title) patch.title = title;
     if (description !== (c.description ?? '').trim()) patch.description = description;
-    if (dueIso !== (c.dueDate ?? null)) patch.dueDate = dueIso;
     if (startIso !== (c.startDate ?? null)) patch.startDate = startIso ?? undefined;
     if (endIso !== (c.endDate ?? null)) patch.endDate = endIso ?? undefined;
-    if (this.issueTypeDraft() !== (c.issueType ?? 'FEATURE')) patch.issueType = this.issueTypeDraft();
+    if (issueType !== (c.issueType ?? '').trim()) patch.issueType = issueType || null;
     if (this.observationsDraft().trim() !== (c.observations ?? '').trim()) {
       patch.observations = this.observationsDraft().trim();
     }
@@ -275,9 +263,6 @@ export class WorkCardDrawer {
     }
     if (this.boardListIdDraft() !== (c.boardListId ?? null)) {
       patch.boardListId = this.boardListIdDraft();
-    }
-    if (this.estimateMinutesDraft() !== (c.estimateMinutes ?? null)) {
-      patch.estimateMinutes = this.estimateMinutesDraft();
     }
 
     if (!Object.keys(patch).length) return;
@@ -500,8 +485,6 @@ export class WorkCardDrawer {
 
   formatMinutes = formatWorkMinutes;
   formatDate = formatWorkDate;
-  formatTimeOverrun = formatTimeOverrun;
-  formatTimeRemaining = formatTimeRemaining;
   priorityMeta = priorityMeta;
   boardDisplayName = boardDisplayName;
 }

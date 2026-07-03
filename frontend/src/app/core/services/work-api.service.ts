@@ -9,7 +9,6 @@ import {
   WorkCard,
   WorkColumnId,
   WorkComment,
-  WorkIssueType,
   WorkMember,
   WorkPriority,
   WorkTimeEntry,
@@ -36,7 +35,7 @@ export interface GanttTask {
   parentId?: string | null;
   estimateMinutes?: number | null;
   priority?: WorkPriority;
-  issueType?: WorkIssueType;
+  issueType?: string;
   projectName?: string;
   observations?: string | null;
   hasChildren?: boolean;
@@ -171,13 +170,58 @@ export interface UpdateIssuePayload {
   observations?: string | null;
 }
 
+export interface DashboardResponse {
+  total: number;
+  open: number;
+  inProgress: number;
+  done: number;
+  unassigned: number;
+  critical: number;
+  trackedMinutes: number;
+  byStatus: { label: string; count: number }[];
+  byPriority: { label: string; count: number }[];
+}
+
+export interface UserPreferencesResponse {
+  activeIssueFilter: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class WorkApiService {
   private http = inject(HttpClient);
   private base = environment.apiUrl;
 
-  bootstrap(): Observable<WorkBootstrapResponse> {
-    return this.http.get<WorkBootstrapResponse>(`${this.base}/api/work/bootstrap`);
+  bootstrap(options?: { cards?: 'all' | 'none' | 'board'; boardId?: string }): Observable<WorkBootstrapResponse> {
+    const params: Record<string, string> = {};
+    if (options?.cards) {
+      params['cards'] = options.cards;
+    }
+    if (options?.boardId) {
+      params['boardId'] = options.boardId;
+    }
+    return this.http.get<WorkBootstrapResponse>(`${this.base}/api/work/bootstrap`, { params });
+  }
+
+  getProjectCards(projectId: string): Observable<WorkCard[]> {
+    return this.http.get<WorkCard[]>(`${this.base}/api/projects/${projectId}/cards`);
+  }
+
+  getDashboard(options?: { projectId?: string; startDate?: string; endDate?: string }): Observable<DashboardResponse> {
+    const params: Record<string, string> = {};
+    if (options?.projectId) params['projectId'] = options.projectId;
+    if (options?.startDate) params['startDate'] = options.startDate;
+    if (options?.endDate) params['endDate'] = options.endDate;
+    return this.http.get<DashboardResponse>(`${this.base}/api/dashboards`, { params });
+  }
+
+  getUserPreferences(): Observable<UserPreferencesResponse> {
+    return this.http.get<UserPreferencesResponse>(`${this.base}/api/users/me/preferences`);
+  }
+
+  updateUserPreferences(activeIssueFilter: string): Observable<UserPreferencesResponse> {
+    return this.http.put<UserPreferencesResponse>(`${this.base}/api/users/me/preferences`, {
+      activeIssueFilter,
+    });
   }
 
   getIssueDetails(issueId: string): Observable<IssueDetailsResponse> {

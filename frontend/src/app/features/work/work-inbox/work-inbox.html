@@ -33,6 +33,10 @@
     </div>
   </div>
 
+  @if (createError(); as err) {
+    <p class="text-sm text-red-600 m-0">{{ err }}</p>
+  }
+
   <div class="work-kanban-scroll">
     <div class="work-kanban">
       @for (column of columns; track column.id) {

@@ -82,31 +82,6 @@ export const routes: Routes = [
         ],
       },
       {
-        path: 'attentions',
-        loadComponent: () =>
-          import('./features/attentions/attentions-home/attentions-home').then(m => m.AttentionsHome),
-        data: { breadcrumb: 'Atenciones' },
-        children: [
-          {
-            path: '',
-            loadComponent: () =>
-              import('./features/attentions/attentions-index/attentions-index').then(m => m.AttentionsIndex),
-          },
-          {
-            path: 'create',
-            loadComponent: () =>
-              import('./features/attentions/attentions-form/attentions-form').then(m => m.AttentionsForm),
-            data: { breadcrumb: 'Nuevo' },
-          },
-          {
-            path: ':id/show',
-            loadComponent: () =>
-              import('./features/attentions/attentions-form/attentions-form').then(m => m.AttentionsForm),
-            data: { breadcrumb: 'Ver' },
-          },
-        ],
-      },
-      {
         path: 'users',
         loadComponent: () =>
           import('./features/users/users-home/users-home').then(m => m.UsersHome),
@@ -140,64 +115,6 @@ export const routes: Routes = [
                   import('./features/users/users-form/users-form').then(m => m.UsersForm),
               },
             ],
-          },
-        ],
-      },
-      {
-        path: 'deceased',
-        loadComponent: () =>
-          import('./features/deceased/deceased-home/deceased-home').then(m => m.DeceasedHome),
-        data: { breadcrumb: 'Padrón de difuntos' },
-        children: [
-          {
-            path: '',
-            loadComponent: () =>
-              import('./features/deceased/deceased-index/deceased-index').then(m => m.DeceasedIndex),
-          },
-          {
-            path: 'create',
-            loadComponent: () =>
-              import('./features/deceased/deceased-form/deceased-form').then(m => m.DeceasedForm),
-            data: { breadcrumb: 'Nuevo' },
-          },
-          {
-            path: ':id/show',
-            loadComponent: () =>
-              import('./features/deceased/deceased-form/deceased-form').then(m => m.DeceasedForm),
-            data: { breadcrumb: 'Ver' },
-          },
-        ],
-      },
-      {
-        path: 'service-catalog',
-        loadComponent: () =>
-          import('./features/service-catalog/service-catalog-home/service-catalog-home').then(
-            m => m.ServiceCatalogHome
-          ),
-        data: { breadcrumb: 'Catálogo de servicios' },
-        children: [
-          {
-            path: '',
-            loadComponent: () =>
-              import('./features/service-catalog/service-catalog-index/service-catalog-index').then(
-                m => m.ServiceCatalogIndex
-              ),
-          },
-          {
-            path: 'create',
-            loadComponent: () =>
-              import('./features/service-catalog/service-catalog-form/service-catalog-form').then(
-                m => m.ServiceCatalogForm
-              ),
-            data: { breadcrumb: 'Nuevo' },
-          },
-          {
-            path: ':id/show',
-            loadComponent: () =>
-              import('./features/service-catalog/service-catalog-form/service-catalog-form').then(
-                m => m.ServiceCatalogForm
-              ),
-            data: { breadcrumb: 'Ver' },
           },
         ],
       },

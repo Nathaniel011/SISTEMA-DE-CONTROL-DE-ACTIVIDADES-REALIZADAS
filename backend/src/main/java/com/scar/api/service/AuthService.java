@@ -5,6 +5,7 @@ import com.scar.api.domain.enums.UserRole;
 import com.scar.api.dto.ChangePasswordRequest;
 import com.scar.api.dto.LoginRequest;
 import com.scar.api.dto.LoginResponse;
+import com.scar.api.dto.UpdateProfileRequest;
 import com.scar.api.repository.UserRepository;
 import com.scar.api.security.ScarPrincipal;
 import com.scar.api.security.JwtService;
@@ -15,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Locale;
+import java.util.UUID;
 
 @Service
 public class AuthService {
@@ -49,9 +51,32 @@ public class AuthService {
 
     @Transactional(readOnly = true)
     public LoginResponse.UserDto me(ScarPrincipal principal) {
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "No autenticado");
+        }
         User user = userRepository.findById(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         return toUserDto(user);
+    }
+
+    @Transactional
+    public LoginResponse.UserDto updateProfile(ScarPrincipal principal, UpdateProfileRequest request) {
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "No autenticado");
+        }
+        User user = userRepository.findById(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+
+        String email = request.email().trim().toLowerCase(Locale.ROOT);
+        final UUID userId = user.getId();
+        if (!email.equalsIgnoreCase(user.getEmail())
+            && userRepository.findByUsernameOrEmailIgnoreCase(email).filter(u -> !u.getId().equals(userId)).isPresent()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "El correo ya está en uso");
+        }
+
+        user.setFullName(request.fullName().trim());
+        user.setEmail(email);
+        return toUserDto(userRepository.save(user));
     }
 
     @Transactional

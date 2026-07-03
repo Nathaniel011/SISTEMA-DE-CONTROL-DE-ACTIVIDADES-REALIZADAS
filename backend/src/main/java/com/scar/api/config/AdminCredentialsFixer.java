@@ -3,6 +3,7 @@ package com.scar.api.config;
 import com.scar.api.domain.entity.User;
 import com.scar.api.domain.enums.UserRole;
 import com.scar.api.repository.UserRepository;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -12,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Optional;
 
 @Component
+@ConditionalOnProperty(name = "scar.dev.auto-fix-admin", havingValue = "true", matchIfMissing = true)
 public class AdminCredentialsFixer implements ApplicationRunner {
 
     private static final String ADMIN_USERNAME = "administrador";

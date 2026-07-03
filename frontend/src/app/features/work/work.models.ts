@@ -109,7 +109,7 @@ export interface WorkCard {
   publicToken?: string;
   startDate?: string;
   endDate?: string;
-  issueType?: WorkIssueType;
+  issueType?: string | null;
   observations?: string | null;
 }
 

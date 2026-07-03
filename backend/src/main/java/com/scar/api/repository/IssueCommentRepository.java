@@ -12,6 +12,9 @@ import java.util.UUID;
 public interface IssueCommentRepository extends JpaRepository<IssueComment, UUID> {
     List<IssueComment> findByIssueIdOrderByCreatedAtAsc(UUID issueId);
 
+    @Query("SELECT c FROM IssueComment c JOIN FETCH c.author WHERE c.issue.id = :issueId ORDER BY c.createdAt ASC")
+    List<IssueComment> findByIssueIdWithAuthorOrderByCreatedAtAsc(@Param("issueId") UUID issueId);
+
     @Query("SELECT c FROM IssueComment c JOIN FETCH c.author WHERE c.issue.id IN :issueIds ORDER BY c.createdAt ASC")
     List<IssueComment> findByIssueIdInOrderByCreatedAtAsc(@Param("issueIds") Collection<UUID> issueIds);
 

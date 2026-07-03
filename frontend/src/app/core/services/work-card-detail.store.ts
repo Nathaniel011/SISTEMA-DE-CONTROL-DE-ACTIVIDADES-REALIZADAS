@@ -31,10 +31,15 @@ export class WorkCardDetailStore {
 
   private states = signal<Record<string, CardDetailState>>({});
   private inflight = new Map<string, Promise<void>>();
+  private accessOrder: string[] = [];
 
   snapshot(cardId: string | null | undefined): CardDetailState {
     if (!cardId) return EMPTY_DETAIL;
-    return this.states()[cardId] ?? EMPTY_DETAIL;
+    const state = this.states()[cardId];
+    if (state) {
+      this.markAccessed(cardId);
+    }
+    return state ?? EMPTY_DETAIL;
   }
 
   async load(cardId: string, force = false): Promise<void> {
@@ -59,6 +64,7 @@ export class WorkCardDetailStore {
     const next = { ...this.states() };
     delete next[cardId];
     this.states.set(next);
+    this.accessOrder = this.accessOrder.filter(id => id !== cardId);
   }
 
   setAttachments(cardId: string, attachments: WorkAttachment[]): void {
@@ -136,7 +142,7 @@ export class WorkCardDetailStore {
   }
 
   private syncTrackedMinutes(cardId: string, timeEntries: WorkTimeEntry[]): void {
-    const total = timeEntries.reduce((sum, entry) => sum + entry.minutes, 0);
+    const total = Math.max(0, timeEntries.reduce((sum, entry) => sum + entry.minutes, 0));
     const card = this.workService.getCard(cardId);
     if (!card || card.trackedMinutes === total) return;
     this.workService.replaceCardPublic({ ...card, trackedMinutes: total });
@@ -162,18 +168,24 @@ export class WorkCardDetailStore {
 
   private patch(cardId: string, partial: Partial<CardDetailState>): void {
     const current = this.snapshot(cardId);
+    this.markAccessed(cardId);
     this.states.update(map => {
       const next = { ...map, [cardId]: { ...current, ...partial } };
-      const keys = Object.keys(next);
-      if (keys.length <= MAX_CACHED_CARDS) {
+      if (Object.keys(next).length <= MAX_CACHED_CARDS) {
         return next;
       }
-      const toRemove = keys.find(id => id !== cardId && !next[id]?.loading);
-      if (toRemove) {
+      const toRemove = this.accessOrder.find(id => id !== cardId && !next[id]?.loading);
+      if (toRemove && next[toRemove]) {
         const { [toRemove]: _, ...trimmed } = next;
+        this.accessOrder = this.accessOrder.filter(id => id !== toRemove);
         return trimmed;
       }
       return next;
     });
+  }
+
+  private markAccessed(cardId: string): void {
+    this.accessOrder = this.accessOrder.filter(id => id !== cardId);
+    this.accessOrder.push(cardId);
   }
 }

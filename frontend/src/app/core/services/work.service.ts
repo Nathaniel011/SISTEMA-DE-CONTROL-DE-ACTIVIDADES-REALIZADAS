@@ -3,7 +3,7 @@ import {firstValueFrom} from 'rxjs';
 import {environment} from '../../../environments/environment';
 import {PermissionsService} from './permissions.service';
 import {AuthService} from './auth.service';
-import {UpdateIssuePayload, WorkApiService} from './work-api.service';
+import {UpdateIssuePayload, WorkApiService, DashboardResponse} from './work-api.service';
 import {
   createDefaultWorkState,
   newBoardId,
@@ -38,6 +38,12 @@ export class WorkService {
   private loading = signal(false);
   private loadError = signal<string | null>(null);
   private bootstrapPromise: Promise<void> | null = null;
+  private boardCardsPromises = new Map<string, Promise<void>>();
+  private allCardsPromise: Promise<void> | null = null;
+  private allCardsLoaded = signal(false);
+
+  dashboardMetrics = signal<DashboardResponse | null>(null);
+  dashboardLoading = signal(false);
 
   selectedBoardId = signal<string | 'all'>('all');
   activeSavedSearch = signal<WorkIssueFilter>('all');
@@ -96,14 +102,16 @@ export class WorkService {
     this.loadError.set(null);
     this.bootstrapPromise = (async () => {
       try {
-        const data = await firstValueFrom(this.workApi.bootstrap());
+        const data = await firstValueFrom(this.workApi.bootstrap({ cards: 'none' }));
         this.state.set({
           boards: data.boards.map(b => ({ ...b, type: b.type ?? 'standard' })),
           boardLists: (data.boardLists ?? []).map(list => this.mapBoardList(list)),
-          cards: data.cards,
+          cards: [],
           members: data.members,
           activeTimer: data.activeTimer,
         });
+        this.allCardsLoaded.set(false);
+        await this.loadUserPreferences();
       } catch {
         this.loadError.set('No se pudo cargar los datos del tablero');
         throw new Error('bootstrap failed');
@@ -113,6 +121,105 @@ export class WorkService {
       }
     })();
     return this.bootstrapPromise;
+  }
+
+  async ensureBoardCards(boardId: string): Promise<void> {
+    if (!environment.useApi || !boardId) {
+      return;
+    }
+    const existing = this.boardCardsPromises.get(boardId);
+    if (existing) {
+      return existing;
+    }
+    const hasCards = this.cards().some(c => c.boardId === boardId);
+    if (hasCards) {
+      return;
+    }
+    const promise = (async () => {
+      try {
+        const cards = await firstValueFrom(this.workApi.getProjectCards(boardId));
+        this.mergeCards(cards);
+      } finally {
+        this.boardCardsPromises.delete(boardId);
+      }
+    })();
+    this.boardCardsPromises.set(boardId, promise);
+    return promise;
+  }
+
+  async ensureAllCards(): Promise<void> {
+    if (!environment.useApi) {
+      return;
+    }
+    if (this.allCardsLoaded()) {
+      return;
+    }
+    if (this.allCardsPromise) {
+      return this.allCardsPromise;
+    }
+    this.allCardsPromise = (async () => {
+      try {
+        const data = await firstValueFrom(this.workApi.bootstrap({ cards: 'all' }));
+        this.mergeCards(data.cards);
+        this.allCardsLoaded.set(true);
+      } finally {
+        this.allCardsPromise = null;
+      }
+    })();
+    return this.allCardsPromise;
+  }
+
+  async loadDashboard(options?: string | { projectId?: string; startDate?: string; endDate?: string }): Promise<void> {
+    const filters = typeof options === 'string' ? { projectId: options } : options;
+    if (!environment.useApi) {
+      this.dashboardMetrics.set(this.getDashboardMetrics() as DashboardResponse);
+      return;
+    }
+    this.dashboardLoading.set(true);
+    try {
+      const metrics = await firstValueFrom(this.workApi.getDashboard(filters));
+      this.dashboardMetrics.set(metrics);
+    } finally {
+      this.dashboardLoading.set(false);
+    }
+  }
+
+  async loadUserPreferences(): Promise<void> {
+    if (!environment.useApi) {
+      return;
+    }
+    try {
+      const prefs = await firstValueFrom(this.workApi.getUserPreferences());
+      const filter = prefs.activeIssueFilter as WorkIssueFilter;
+      if (['all', 'assigned', 'commented', 'mentioned', 'unassigned'].includes(filter)) {
+        this.activeSavedSearch.set(filter);
+      }
+    } catch {
+      // Preferencias opcionales; mantener valor por defecto.
+    }
+  }
+
+  async saveActiveSearch(filter: WorkIssueFilter): Promise<void> {
+    this.activeSavedSearch.set(filter);
+    if (!environment.useApi) {
+      return;
+    }
+    try {
+      await firstValueFrom(this.workApi.updateUserPreferences(filter));
+    } catch {
+      // No bloquear la UI si falla la persistencia.
+    }
+  }
+
+  private mergeCards(incoming: WorkCard[]): void {
+    if (!incoming.length) {
+      return;
+    }
+    const byId = new Map(this.cards().map(card => [card.id, card]));
+    for (const card of incoming) {
+      byId.set(card.id, card);
+    }
+    this.patch({ cards: Array.from(byId.values()) });
   }
 
   patchMembers(members: WorkState['members']): void {
@@ -467,7 +574,7 @@ export class WorkService {
   timerElapsedSeconds(): number {
     const timer = this.activeTimer();
     if (!timer) return 0;
-    return Math.floor((Date.now() - new Date(timer.startedAt).getTime()) / 1000);
+    return Math.max(0, Math.floor((Date.now() - new Date(timer.startedAt).getTime()) / 1000));
   }
 
   createBoard(payload: Pick<WorkBoard, 'name' | 'description'>): WorkBoard {
@@ -704,7 +811,7 @@ export class WorkService {
         receptionChannel: merged.receptionChannel,
         startDate: merged.startDate,
         endDate: merged.endDate,
-        issueType: merged.issueType,
+        issueType: merged.issueType ?? undefined,
         observations: merged.observations,
       };
       return firstValueFrom(this.workApi.updateIssue(cardId, payload))
@@ -886,7 +993,7 @@ export class WorkService {
     };
     this.updateCard(cardId, {
       timeEntries: [...card.timeEntries, entry],
-      trackedMinutes: card.trackedMinutes + minutes,
+      trackedMinutes: Math.max(0, card.trackedMinutes + minutes),
     });
     return Promise.resolve(entry);
   }
@@ -936,7 +1043,7 @@ export class WorkService {
     this.replaceCard({
       ...card,
       timeEntries: [...card.timeEntries, entry],
-      trackedMinutes: card.trackedMinutes + entry.minutes,
+      trackedMinutes: Math.max(0, card.trackedMinutes + entry.minutes),
     });
   }
 

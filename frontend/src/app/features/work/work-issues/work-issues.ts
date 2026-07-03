@@ -60,6 +60,8 @@ export class WorkIssues {
         void this.router.navigate([], { queryParams: {}, replaceUrl: true });
       }
     });
+
+    void this.workService.ensureAllCards();
   }
 
   boardOptions(): { label: string; value: string }[] {
@@ -74,7 +76,7 @@ export class WorkIssues {
   }
 
   selectSearch(filter: WorkIssueFilter): void {
-    this.workService.activeSavedSearch.set(filter);
+    void this.workService.saveActiveSearch(filter);
   }
 
   openIssue(cardId: string): void {

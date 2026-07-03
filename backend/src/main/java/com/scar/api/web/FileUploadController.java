@@ -36,7 +36,7 @@ public class FileUploadController {
 
     private static final long MAX_FILE_SIZE = 10 * 1024 * 1024;
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
-        "jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "pdf"
+        "jpg", "jpeg", "png", "gif", "webp", "bmp", "pdf"
     );
 
     private final AttachmentRepository attachmentRepository;
@@ -80,9 +80,16 @@ public class FileUploadController {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Archivo no encontrado");
         }
         Resource resource = new UrlResource(filePath.toUri());
+        boolean forceDownload = isSvgAttachment(attachment);
+        String disposition = forceDownload
+            ? "attachment; filename=\"" + attachment.getFileName() + "\""
+            : "inline; filename=\"" + attachment.getFileName() + "\"";
+        MediaType mediaType = forceDownload
+            ? MediaType.APPLICATION_OCTET_STREAM
+            : MediaType.parseMediaType(attachment.getMimeType());
         return ResponseEntity.ok()
-            .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + attachment.getFileName() + "\"")
-            .contentType(MediaType.parseMediaType(attachment.getMimeType()))
+            .header(HttpHeaders.CONTENT_DISPOSITION, disposition)
+            .contentType(mediaType)
             .body(resource);
     }
 
@@ -171,13 +178,17 @@ public class FileUploadController {
 
     private boolean isAllowedFile(String filename, String mimeType) {
         String extension = fileExtension(filename);
+        String normalizedMime = mimeType == null ? "" : mimeType.toLowerCase(Locale.ROOT);
+        if ("svg".equals(extension) || normalizedMime.contains("svg")) {
+            return false;
+        }
         if (extension != null && ALLOWED_EXTENSIONS.contains(extension)) {
             return true;
         }
-        if (mimeType == null || mimeType.isBlank()) {
+        if (normalizedMime.isBlank()) {
             return false;
         }
-        return mimeType.startsWith("image/") || "application/pdf".equalsIgnoreCase(mimeType);
+        return normalizedMime.startsWith("image/") || "application/pdf".equalsIgnoreCase(mimeType);
     }
 
     private String fileExtension(String filename) {
@@ -193,6 +204,15 @@ public class FileUploadController {
             return "archivo";
         }
         return filename.replaceAll("[\\\\/:*?\"<>|]", "_");
+    }
+
+    private boolean isSvgAttachment(Attachment attachment) {
+        String mime = attachment.getMimeType();
+        if (mime != null && mime.toLowerCase(Locale.ROOT).contains("svg")) {
+            return true;
+        }
+        String extension = fileExtension(attachment.getFileName());
+        return "svg".equals(extension);
     }
 
     public record FileUploadResponse(

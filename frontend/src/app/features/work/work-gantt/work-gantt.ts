@@ -11,7 +11,7 @@ import {WorkService} from '../../../core/services/work.service';
 import {GanttResponse, GanttTask, WorkApiService} from '../../../core/services/work-api.service';
 import {environment} from '../../../../environments/environment';
 import {firstValueFrom} from 'rxjs';
-import {WORK_ISSUE_TYPE_LABELS, WorkCard, WorkColumnId, WorkIssueType, WorkPriority} from '../work.models';
+import {WORK_ISSUE_TYPE_LABELS, WorkCard, WorkColumnId, WorkPriority} from '../work.models';
 
 interface GanttRow {
   id: string;
@@ -25,7 +25,7 @@ interface GanttRow {
   parentId: string | null;
   estimateMinutes: number | null;
   priority: WorkPriority;
-  issueType: WorkIssueType;
+  issueType: string;
   hasChildren: boolean;
   depth: number;
   estimateLabel: string;
@@ -220,7 +220,7 @@ export class WorkGantt {
         parentId: task.parentId ?? null,
         estimateMinutes: task.estimateMinutes ?? null,
         priority: (task.priority ?? 'medium') as WorkPriority,
-        issueType: (task.issueType ?? 'FEATURE') as WorkIssueType,
+        issueType: task.issueType ?? '',
         hasChildren: !!task.hasChildren,
         depth: depthOf(task.id),
         estimateLabel: isSection ? '—' : this.formatEstimate(task.estimateMinutes),
@@ -437,8 +437,8 @@ export class WorkGantt {
     return labels[priority] ?? priority;
   }
 
-  issueTypeLabel(type: WorkIssueType): string {
-    return WORK_ISSUE_TYPE_LABELS[type] ?? type;
+  issueTypeLabel(type: string): string {
+    return WORK_ISSUE_TYPE_LABELS[type as keyof typeof WORK_ISSUE_TYPE_LABELS] ?? type;
   }
 
   private async loadGantt(boardId: string): Promise<void> {
@@ -552,7 +552,7 @@ export class WorkGantt {
       parentId,
       estimateMinutes: card.estimateMinutes,
       priority: card.priority,
-      issueType: card.issueType ?? 'FEATURE',
+      issueType: card.issueType ?? '',
       hasChildren: children.length > 0,
       rowType: 'TASK',
       projectId: boardId,

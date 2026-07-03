@@ -27,6 +27,8 @@ server:
     context-path: /
 
 scar:
+  dev:
+    auto-fix-admin: ${SCAR_AUTO_FIX_ADMIN:true}
   db:
     auto-provision: true
   upload:
@@ -34,6 +36,10 @@ scar:
   webhooks:
     email:
       secret: ${WEBHOOK_EMAIL_SECRET:}
+  security:
+    login-rate-limit:
+      backend: ${SCAR_LOGIN_RATE_LIMIT_BACKEND:memory}
+      redis-key-prefix: ${SCAR_LOGIN_RATE_LIMIT_REDIS_PREFIX:scar:login-rate}
   jwt:
     secret: ${JWT_SECRET:scar-dev-secret-change-in-production-min-256-bits-long-key!!}
     expiration-ms: ${JWT_EXPIRATION_MS:86400000}

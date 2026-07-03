@@ -4,7 +4,51 @@
     <p-button label="Ver incidencias" icon="pi pi-list" severity="primary" routerLink="/work/issues" />
   </div>
 
+  <div class="rounded-2xl border border-surface-200 bg-surface-0 p-4 mb-4">
+    <div class="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto_auto] gap-3 items-end">
+      <label class="flex flex-col gap-1 text-sm">
+        <span class="text-surface-600 font-medium">Desde</span>
+        <input
+          type="date"
+          class="p-inputtext p-component w-full"
+          [ngModel]="startDate()"
+          (ngModelChange)="startDate.set($event)"
+        />
+      </label>
+      <label class="flex flex-col gap-1 text-sm">
+        <span class="text-surface-600 font-medium">Hasta</span>
+        <input
+          type="date"
+          class="p-inputtext p-component w-full"
+          [ngModel]="endDate()"
+          (ngModelChange)="endDate.set($event)"
+        />
+      </label>
+      <p-button
+        label="Aplicar"
+        icon="pi pi-filter"
+        size="small"
+        [loading]="workService.dashboardLoading()"
+        (onClick)="reloadDashboard()"
+      />
+      <p-button
+        label="Limpiar"
+        icon="pi pi-times"
+        size="small"
+        severity="secondary"
+        [outlined]="true"
+        (onClick)="clearFilters()"
+      />
+    </div>
+  </div>
+
   @let m = metrics();
+  @if (workService.dashboardLoading()) {
+    <p class="text-sm text-surface-500">Cargando métricas…</p>
+  }
+  @if (loadError(); as err) {
+    <p class="text-sm text-red-600">{{ err }}</p>
+  }
   <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
     <div class="rounded-2xl border border-surface-200 p-5 bg-primary-500 text-white">
       <div class="text-sm opacity-90">Incidencias abiertas</div>

@@ -84,11 +84,11 @@ export class WorkCardAttachments implements OnDestroy {
     const rejected = files.length - fileList.length;
     input.value = '';
     if (!fileList.length) {
-      this.uploadError.set('Solo se permiten imágenes y archivos PDF.');
+      this.uploadError.set('Solo se permiten imágenes seguras y archivos PDF.');
       return;
     }
     this.uploadError.set(
-      rejected > 0 ? 'Algunos archivos se omitieron: solo se permiten imágenes y PDF.' : null
+      rejected > 0 ? 'Algunos archivos se omitieron: solo se permiten imágenes seguras y PDF.' : null
     );
     this.uploading.set(true);
 
@@ -177,10 +177,14 @@ export class WorkCardAttachments implements OnDestroy {
 
   private isAllowedFile(file: File): boolean {
     const name = file.name.toLowerCase();
-    if (/\.(jpe?g|png|gif|webp|bmp|svg|pdf)$/.test(name)) {
+    if (name.endsWith('.svg') || file.type.toLowerCase().includes('svg')) {
+      return false;
+    }
+    if (/\.(jpe?g|png|gif|webp|bmp|pdf)$/.test(name)) {
       return true;
     }
-    return file.type.startsWith('image/') || file.type === 'application/pdf';
+    return (file.type.startsWith('image/') && !file.type.toLowerCase().includes('svg'))
+      || file.type === 'application/pdf';
   }
 
   fileExtension(fileName: string): string {

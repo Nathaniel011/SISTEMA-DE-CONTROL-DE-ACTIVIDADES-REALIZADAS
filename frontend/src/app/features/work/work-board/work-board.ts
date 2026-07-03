@@ -29,6 +29,7 @@ import {
   getTimeOverrunStatus,
   getTimeOverrunColor,
   boardDisplayName,
+  WORK_DRAFT_CARD_TITLE,
 } from '../work.utils';
 import {WorkCardDrawer} from '../work-card-drawer/work-card-drawer';
 import {WorkBoardSwitcher} from '../work-board-switcher/work-board-switcher';
@@ -68,6 +69,7 @@ export class WorkBoard {
   assigneeFilter = signal<string | null>(null);
   selectedCardId = signal<string | null>(null);
   drawerOpen = signal(false);
+  createError = signal<string | null>(null);
   newListName = signal('');
   addingList = signal(false);
   editingListId = signal<string | null>(null);
@@ -87,6 +89,7 @@ export class WorkBoard {
       const id = this.boardId();
       if (id) {
         this.workService.recordBoardVisit(id);
+        void this.workService.ensureBoardCards(id);
       }
     });
   }
@@ -97,6 +100,10 @@ export class WorkBoard {
 
   cardsForList(list: WorkBoardList): WorkCard[] {
     let cards = this.workService.getCardsInList(this.boardId(), list.id);
+    const selectedId = this.selectedCardId();
+    cards = cards.filter(
+      c => c.title !== WORK_DRAFT_CARD_TITLE || c.id === selectedId
+    );
     const query = this.search().trim().toLowerCase();
     const assignee = this.assigneeFilter();
 
@@ -123,6 +130,7 @@ export class WorkBoard {
       ? this.lists().find(l => l.id === listId)
       : this.lists()[0];
     if (!list) return;
+    this.createError.set(null);
     try {
       const card = await this.workService.createDraftCard({
         boardId: this.boardId(),
@@ -131,7 +139,7 @@ export class WorkBoard {
       this.selectedCardId.set(card.id);
       this.drawerOpen.set(true);
     } catch {
-      // Sin feedback dedicado; el usuario puede reintentar.
+      this.createError.set('No se pudo crear la tarjeta. Inténtalo de nuevo.');
     }
   }
 

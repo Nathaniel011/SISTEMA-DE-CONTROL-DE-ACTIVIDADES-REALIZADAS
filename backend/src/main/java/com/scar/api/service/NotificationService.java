@@ -45,10 +45,7 @@ public class NotificationService {
 
     @Transactional
     public void markAllRead(UUID userId) {
-        notificationRepository.findByUserIdOrderByCreatedAtDesc(userId).forEach(n -> {
-            n.setReadFlag(true);
-            notificationRepository.save(n);
-        });
+        notificationRepository.markAllReadByUserId(userId);
     }
 
     @Transactional

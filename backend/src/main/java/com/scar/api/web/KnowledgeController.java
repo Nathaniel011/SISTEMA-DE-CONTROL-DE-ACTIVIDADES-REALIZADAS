@@ -4,6 +4,7 @@ import com.scar.api.dto.KnowledgeArticleDto;
 import com.scar.api.dto.KnowledgeArticleRequest;
 import com.scar.api.security.ScarPrincipal;
 import com.scar.api.service.KnowledgeService;
+import jakarta.validation.Valid;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -40,7 +41,7 @@ public class KnowledgeController {
     @PostMapping
     public KnowledgeArticleDto create(
         @AuthenticationPrincipal ScarPrincipal principal,
-        @RequestBody KnowledgeArticleRequest request
+        @Valid @RequestBody KnowledgeArticleRequest request
     ) {
         return knowledgeService.create(principal, request);
     }
@@ -49,7 +50,7 @@ public class KnowledgeController {
     public KnowledgeArticleDto update(
         @AuthenticationPrincipal ScarPrincipal principal,
         @PathVariable UUID id,
-        @RequestBody KnowledgeArticleRequest request
+        @Valid @RequestBody KnowledgeArticleRequest request
     ) {
         return knowledgeService.update(principal, id, request);
     }

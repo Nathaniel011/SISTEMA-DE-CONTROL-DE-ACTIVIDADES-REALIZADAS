@@ -40,6 +40,10 @@
       </div>
     </div>
 
+    @if (createError(); as err) {
+      <p class="text-sm text-red-600 m-0">{{ err }}</p>
+    }
+
     <div class="work-kanban-scroll">
       <div class="work-kanban">
         @for (list of lists(); track list.id) {

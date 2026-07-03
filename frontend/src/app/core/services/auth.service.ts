@@ -74,15 +74,26 @@ export class AuthService {
     this.router.navigateByUrl('/auth/login');
   }
 
-  updateProfile(payload: Pick<AuthenticatedUser, 'fullName' | 'email'>): void {
+  updateProfile(payload: Pick<AuthenticatedUser, 'fullName' | 'email'>): Promise<AuthenticatedUser> {
     const currentUser = this.currentUserState();
     if (!currentUser) {
-      return;
+      return Promise.reject(new Error('No autenticado'));
     }
 
-    const next = { ...currentUser, ...payload };
-    this.currentUserState.set(next);
-    localStorage.setItem(USER_KEY, JSON.stringify(next));
+    if (!environment.useApi) {
+      const next = { ...currentUser, ...payload };
+      this.currentUserState.set(next);
+      localStorage.setItem(USER_KEY, JSON.stringify(next));
+      return Promise.resolve(next);
+    }
+
+    return firstValueFrom(
+      this.http.put<AuthenticatedUser>(`${environment.apiUrl}/api/auth/profile`, payload)
+    ).then(user => {
+      this.currentUserState.set(user);
+      localStorage.setItem(USER_KEY, JSON.stringify(user));
+      return user;
+    });
   }
 
   changePassword(payload: ChangePasswordPayload): Promise<void> {

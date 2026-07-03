@@ -28,8 +28,20 @@
         <input id="profile-roles" pInputText formControlName="roles" />
       </div>
 
-      <div class="md:col-span-2 flex justify-end">
-        <p-button label="Guardar cambios" icon="pi pi-save" (onClick)="save()" />
+      <div class="md:col-span-2 flex flex-col items-end gap-2">
+        @if (saveError(); as err) {
+          <p class="text-sm text-red-600 m-0 w-full">{{ err }}</p>
+        }
+        @if (saveSuccess()) {
+          <p class="text-sm text-green-700 m-0 w-full">Perfil actualizado correctamente.</p>
+        }
+        <p-button
+          label="Guardar cambios"
+          icon="pi pi-save"
+          (onClick)="save()"
+          [loading]="saving()"
+          [disabled]="saving()"
+        />
       </div>
     </form>
   </ng-template>

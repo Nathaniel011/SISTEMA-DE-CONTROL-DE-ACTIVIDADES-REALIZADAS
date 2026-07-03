@@ -1,4 +1,4 @@
-import {Component, effect, inject} from '@angular/core';
+import {Component, effect, inject, signal} from '@angular/core';
 import {FormBuilder, ReactiveFormsModule, Validators} from '@angular/forms';
 import {Button} from 'primeng/button';
 import {Card} from 'primeng/card';
@@ -18,6 +18,10 @@ import {AuthService} from '../../../core/services/auth.service';
 export class AccountProfile {
   private formBuilder = inject(FormBuilder);
   private authService = inject(AuthService);
+
+  saving = signal(false);
+  saveError = signal<string | null>(null);
+  saveSuccess = signal(false);
 
   form = this.formBuilder.group({
     fullName: ['', [Validators.required, Validators.minLength(3)]],
@@ -42,15 +46,25 @@ export class AccountProfile {
     });
   }
 
-  save(): void {
+  async save(): Promise<void> {
     if (this.form.invalid) {
       this.form.markAllAsTouched();
       return;
     }
 
-    this.authService.updateProfile({
-      fullName: this.form.getRawValue().fullName ?? '',
-      email: this.form.getRawValue().email ?? '',
-    });
+    this.saving.set(true);
+    this.saveError.set(null);
+    this.saveSuccess.set(false);
+    try {
+      await this.authService.updateProfile({
+        fullName: this.form.getRawValue().fullName ?? '',
+        email: this.form.getRawValue().email ?? '',
+      });
+      this.saveSuccess.set(true);
+    } catch {
+      this.saveError.set('No se pudo guardar el perfil. Inténtalo de nuevo.');
+    } finally {
+      this.saving.set(false);
+    }
   }
 }

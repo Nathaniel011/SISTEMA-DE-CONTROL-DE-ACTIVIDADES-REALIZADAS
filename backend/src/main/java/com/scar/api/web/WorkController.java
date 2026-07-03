@@ -26,8 +26,30 @@ public class WorkController {
     }
 
     @GetMapping("/work/bootstrap")
-    public WorkBootstrapDto bootstrap(@AuthenticationPrincipal ScarPrincipal principal) {
-        return workService.bootstrap(principal);
+    public WorkBootstrapDto bootstrap(
+        @AuthenticationPrincipal ScarPrincipal principal,
+        @RequestParam(defaultValue = "all") String cards,
+        @RequestParam(required = false) UUID boardId
+    ) {
+        return workService.bootstrap(principal, cards, boardId);
+    }
+
+    @GetMapping("/projects/{projectId}/cards")
+    public List<WorkBootstrapDto.CardDto> projectCards(
+        @AuthenticationPrincipal ScarPrincipal principal,
+        @PathVariable UUID projectId
+    ) {
+        return workService.getProjectCards(principal, projectId);
+    }
+
+    @GetMapping("/dashboards")
+    public DashboardDto dashboards(
+        @AuthenticationPrincipal ScarPrincipal principal,
+        @RequestParam(required = false) UUID projectId,
+        @RequestParam(required = false) String startDate,
+        @RequestParam(required = false) String endDate
+    ) {
+        return workService.getDashboard(principal, projectId, startDate, endDate);
     }
 
     @GetMapping("/issues/{id}/details")
@@ -50,7 +72,7 @@ public class WorkController {
     public WorkBootstrapDto.CardDto updateIssue(
         @AuthenticationPrincipal ScarPrincipal principal,
         @PathVariable UUID id,
-        @RequestBody UpdateIssueRequest request
+        @Valid @RequestBody UpdateIssueRequest request
     ) {
         return workService.updateIssue(principal, id, request);
     }
