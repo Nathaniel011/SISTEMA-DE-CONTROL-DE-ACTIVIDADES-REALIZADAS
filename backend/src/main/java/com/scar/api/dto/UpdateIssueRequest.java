@@ -14,5 +14,7 @@ public record UpdateIssueRequest(
     String requesterEmail,
     String receptionChannel,
     String startDate,
-    String endDate
+    String endDate,
+    String issueType,
+    String observations
 ) {}

@@ -230,6 +230,57 @@
             </div>
 
             <div class="work-card-field">
+              <span class="work-card-field-label">Inicio (Gantt)</span>
+              <p-datepicker
+                [ngModel]="startDateDraft()"
+                (ngModelChange)="startDateDraft.set($event)"
+                [showIcon]="true"
+                [showClear]="true"
+                appendTo="body"
+                dateFormat="dd/mm/yy"
+                styleClass="w-full"
+              />
+            </div>
+
+            <div class="work-card-field">
+              <span class="work-card-field-label">Fin (Gantt)</span>
+              <p-datepicker
+                [ngModel]="endDateDraft()"
+                (ngModelChange)="endDateDraft.set($event)"
+                [showIcon]="true"
+                [showClear]="true"
+                appendTo="body"
+                dateFormat="dd/mm/yy"
+                styleClass="w-full"
+              />
+            </div>
+
+            <div class="work-card-field">
+              <span class="work-card-field-label">Tipo de tarea</span>
+              <p-select
+                [options]="issueTypeOptions"
+                optionLabel="label"
+                optionValue="value"
+                [ngModel]="issueTypeDraft()"
+                (ngModelChange)="issueTypeDraft.set($event)"
+                class="w-full"
+                appendTo="body"
+              />
+            </div>
+
+            <div class="work-card-field col-span-full">
+              <span class="work-card-field-label">Observaciones (plan semanal)</span>
+              <textarea
+                pTextarea
+                rows="2"
+                class="w-full"
+                [ngModel]="observationsDraft()"
+                (ngModelChange)="observationsDraft.set($event)"
+                placeholder="Notas para el reporte semanal…"
+              ></textarea>
+            </div>
+
+            <div class="work-card-field">
               <span class="work-card-field-label">Tiempo</span>
               <span class="work-card-field-value">
                 {{ formatMinutes(c.trackedMinutes) }}

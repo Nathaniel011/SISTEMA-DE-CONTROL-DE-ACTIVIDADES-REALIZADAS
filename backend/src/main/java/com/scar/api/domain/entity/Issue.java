@@ -86,6 +86,13 @@ public class Issue {
     @JoinColumn(name = "parent_issue_id")
     private Issue parentIssue;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "issue_type")
+    private IssueType issueType = IssueType.FEATURE;
+
+    @Column(columnDefinition = "TEXT")
+    private String observations;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by_id")
     private User createdBy;
@@ -153,6 +160,10 @@ public class Issue {
     public void setBoardList(BoardList boardList) { this.boardList = boardList; }
     public Issue getParentIssue() { return parentIssue; }
     public void setParentIssue(Issue parentIssue) { this.parentIssue = parentIssue; }
+    public IssueType getIssueType() { return issueType; }
+    public void setIssueType(IssueType issueType) { this.issueType = issueType; }
+    public String getObservations() { return observations; }
+    public void setObservations(String observations) { this.observations = observations; }
     public User getCreatedBy() { return createdBy; }
     public void setCreatedBy(User createdBy) { this.createdBy = createdBy; }
     public Instant getCreatedAt() { return createdAt; }

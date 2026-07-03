@@ -68,6 +68,8 @@ CREATE TABLE issues (
     public_token      UUID DEFAULT gen_random_uuid(),
     start_date        DATE,
     end_date          DATE,
+    issue_type        VARCHAR(30) DEFAULT 'FEATURE',
+    observations      TEXT,
     assigned_at       TIMESTAMPTZ,
     completed_at      TIMESTAMPTZ,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),

@@ -1,7 +1,9 @@
-import {Component, HostListener, computed, effect, inject, signal, untracked} from '@angular/core';
+import {DatePipe} from '@angular/common';
+import {Component, ElementRef, HostListener, computed, effect, inject, signal, untracked, viewChild} from '@angular/core';
 import {FormsModule} from '@angular/forms';
 import {RouterLink} from '@angular/router';
 import {Button} from 'primeng/button';
+import {DatePicker} from 'primeng/datepicker';
 import {Select} from 'primeng/select';
 import {Tag} from 'primeng/tag';
 import {ProgressSpinner} from 'primeng/progressspinner';
@@ -9,9 +11,9 @@ import {WorkService} from '../../../core/services/work.service';
 import {GanttResponse, WorkApiService} from '../../../core/services/work-api.service';
 import {environment} from '../../../../environments/environment';
 import {firstValueFrom} from 'rxjs';
-import {WORK_STATUS_LABELS, WorkColumnId} from '../work.models';
+import {WORK_ISSUE_TYPE_LABELS, WorkColumnId, WorkIssueType, WorkPriority} from '../work.models';
 
-interface TimelineTask {
+interface GanttRow {
   id: string;
   key: string;
   title: string;
@@ -20,8 +22,31 @@ interface TimelineTask {
   columnId: WorkColumnId;
   assigneeName: string;
   progress: number;
-  leftPct: number;
-  widthPct: number;
+  parentId: string | null;
+  estimateMinutes: number | null;
+  priority: WorkPriority;
+  issueType: WorkIssueType;
+  hasChildren: boolean;
+  depth: number;
+  estimateLabel: string;
+  startLabel: string;
+  barColor: string;
+  leftPx: number;
+  widthPx: number;
+}
+
+interface DayColumn {
+  date: Date;
+  iso: string;
+  dayLabel: string;
+  isWeekend: boolean;
+  isToday: boolean;
+  weekLabel: string;
+}
+
+interface LinkPath {
+  id: string;
+  d: string;
 }
 
 type GanttEditMode = 'move' | 'resize-start' | 'resize-end';
@@ -36,18 +61,24 @@ interface GanttDragState {
 }
 
 const MS_PER_DAY = 86_400_000;
+const DAY_WIDTH = 42;
+const ROW_HEIGHT = 44;
+const ALL_PROJECTS = '__all__';
 
 @Component({
   selector: 'app-work-gantt',
-  imports: [FormsModule, Button, Select, Tag, ProgressSpinner, RouterLink],
+  imports: [FormsModule, Button, Select, Tag, ProgressSpinner, RouterLink, DatePicker, DatePipe],
   templateUrl: './work-gantt.html',
 })
 export class WorkGantt {
   private workService = inject(WorkService);
   private workApi = inject(WorkApiService);
+  timelineScroll = viewChild<ElementRef<HTMLDivElement>>('timelineScroll');
 
   selectedBoardId = signal<string | null>(null);
   loading = signal(false);
+  exporting = signal(false);
+  recalculating = signal(false);
   gantt = signal<GanttResponse | null>(null);
   rangeStart = signal<Date>(new Date());
   rangeEnd = signal<Date>(new Date());
@@ -56,12 +87,21 @@ export class WorkGantt {
   dependencySourceId = signal<string | null>(null);
   dependencyTargetId = signal<string | null>(null);
   dependencyType = signal('FINISH_TO_START');
+  weekPicker = signal<Date>(this.mondayOf(new Date()));
+  collapsedIds = signal<Set<string>>(new Set());
   private taskPreview = signal<{ taskId: string; start: Date; end: Date } | null>(null);
   private dragState: GanttDragState | null = null;
 
-  boardOptions = computed(() =>
-    this.workService.boards().map(b => ({ label: b.name, value: b.id }))
-  );
+  boardOptions = computed(() => [
+    { label: 'Todos los proyectos (sin Tablero general)', value: ALL_PROJECTS },
+    ...this.workService.boards().map(b => ({ label: b.name, value: b.id })),
+  ]);
+
+  selectedBoard = computed(() => {
+    const id = this.selectedBoardId();
+    if (!id || id === ALL_PROJECTS) return null;
+    return this.workService.boards().find(b => b.id === id) ?? null;
+  });
 
   taskOptions = computed(() =>
     (this.gantt()?.tasks ?? []).map(task => ({
@@ -81,109 +121,234 @@ export class WorkGantt {
     return !!source && !!target && source !== target && !this.savingDependency();
   });
 
-  timelineTasks = computed(() => {
-    const data = this.gantt();
-    if (!data?.tasks.length) {
-      return [] as TimelineTask[];
+  dayColumns = computed<DayColumn[]>(() => {
+    const start = this.startOfDay(this.rangeStart());
+    const end = this.startOfDay(this.rangeEnd());
+    const days: DayColumn[] = [];
+    const cursor = new Date(start);
+    while (cursor <= end) {
+      const week = this.isoWeek(cursor);
+      days.push({
+        date: new Date(cursor),
+        iso: this.toIsoDate(cursor),
+        dayLabel: cursor.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' }),
+        isWeekend: cursor.getDay() === 0 || cursor.getDay() === 6,
+        isToday: this.isSameDay(cursor, new Date()),
+        weekLabel: `W ${week}`,
+      });
+      cursor.setDate(cursor.getDate() + 1);
     }
-
-    const preview = this.taskPreview();
-    const startMs = this.rangeStart().getTime();
-    const endMs = this.rangeEnd().getTime();
-    const span = Math.max(endMs - startMs, MS_PER_DAY);
-
-    return data.tasks.map(task => {
-      const start = preview?.taskId === task.id ? preview.start : this.parseDate(task.start);
-      const end = preview?.taskId === task.id ? preview.end : this.parseDate(task.end);
-      const leftPct = ((start.getTime() - startMs) / span) * 100;
-      const clampedLeft = Math.min(Math.max(leftPct, 0), 100);
-      const widthPct = Math.max(((end.getTime() - start.getTime()) / span) * 100, 2);
-      return {
-        id: task.id,
-        key: task.key,
-        title: task.title,
-        start,
-        end,
-        columnId: task.columnId,
-        assigneeName: task.assigneeName,
-        progress: task.progress,
-        leftPct: clampedLeft,
-        widthPct: Math.max(2, Math.min(widthPct, 100 - clampedLeft)),
-      };
-    });
+    return days;
   });
 
-  monthMarkers = computed(() => {
-    const start = this.rangeStart();
-    const end = this.rangeEnd();
-    const markers: { label: string; leftPct: number }[] = [];
-    const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
-    const span = Math.max(end.getTime() - start.getTime(), MS_PER_DAY);
-
-    while (cursor <= end) {
-      markers.push({
-        label: cursor.toLocaleDateString('es-ES', { month: 'short', year: '2-digit' }),
-        leftPct: ((cursor.getTime() - start.getTime()) / span) * 100,
-      });
-      cursor.setMonth(cursor.getMonth() + 1);
+  weekGroups = computed(() => {
+    const days = this.dayColumns();
+    const groups: { label: string; span: number }[] = [];
+    for (const day of days) {
+      const last = groups[groups.length - 1];
+      if (last && last.label === day.weekLabel) {
+        last.span += 1;
+      } else {
+        groups.push({ label: day.weekLabel, span: 1 });
+      }
     }
-    return markers;
+    return groups;
+  });
+
+  timelineWidth = computed(() => Math.max(this.dayColumns().length * DAY_WIDTH, DAY_WIDTH * 7));
+
+  todayLeftPx = computed(() => {
+    const today = this.startOfDay(new Date());
+    const start = this.startOfDay(this.rangeStart());
+    const days = Math.round((today.getTime() - start.getTime()) / MS_PER_DAY);
+    if (days < 0 || days > this.dayColumns().length) return null;
+    return days * DAY_WIDTH + DAY_WIDTH / 2;
+  });
+
+  visibleRows = computed<GanttRow[]>(() => {
+    const data = this.gantt();
+    if (!data?.tasks.length) return [];
+
+    const preview = this.taskPreview();
+    const collapsed = this.collapsedIds();
+    const startMs = this.rangeStart().getTime();
+    const byParent = new Map<string | null, typeof data.tasks>();
+    for (const task of data.tasks) {
+      const parent = task.parentId ?? null;
+      const list = byParent.get(parent) ?? [];
+      list.push(task);
+      byParent.set(parent, list);
+    }
+
+    const rows: GanttRow[] = [];
+    const walk = (parentId: string | null, depth: number) => {
+      const children = byParent.get(parentId) ?? [];
+      for (const task of children) {
+        if (parentId && collapsed.has(parentId)) continue;
+        const start = preview?.taskId === task.id ? preview.start : this.parseDate(task.start);
+        const end = preview?.taskId === task.id ? preview.end : this.parseDate(task.end);
+        const leftDays = (this.startOfDay(start).getTime() - startMs) / MS_PER_DAY;
+        const widthDays = Math.max((this.startOfDay(end).getTime() - this.startOfDay(start).getTime()) / MS_PER_DAY + 1, 1);
+        rows.push({
+          id: task.id,
+          key: task.key,
+          title: task.title,
+          start,
+          end,
+          columnId: task.columnId,
+          assigneeName: task.assigneeName ?? 'Sin asignar',
+          progress: task.progress,
+          parentId: task.parentId ?? null,
+          estimateMinutes: task.estimateMinutes ?? null,
+          priority: (task.priority ?? 'medium') as WorkPriority,
+          issueType: (task.issueType ?? 'FEATURE') as WorkIssueType,
+          hasChildren: !!task.hasChildren,
+          depth,
+          estimateLabel: this.formatEstimate(task.estimateMinutes),
+          startLabel: start.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }),
+          barColor: this.barColor(task.columnId, task.priority as WorkPriority),
+          leftPx: Math.max(leftDays * DAY_WIDTH, 0),
+          widthPx: Math.max(widthDays * DAY_WIDTH - 4, 12),
+        });
+        walk(task.id, depth + 1);
+      }
+    };
+    walk(null, 0);
+    return rows;
+  });
+
+  linkPaths = computed<LinkPath[]>(() => {
+    const data = this.gantt();
+    const rows = this.visibleRows();
+    if (!data?.links.length || !rows.length) return [];
+
+    const rowIndex = new Map(rows.map((row, index) => [row.id, index]));
+    const paths: LinkPath[] = [];
+
+    for (const link of data.links) {
+      const sourceIdx = rowIndex.get(link.source);
+      const targetIdx = rowIndex.get(link.target);
+      if (sourceIdx == null || targetIdx == null) continue;
+      const source = rows[sourceIdx];
+      const target = rows[targetIdx];
+      const x1 = source.leftPx + source.widthPx;
+      const y1 = sourceIdx * ROW_HEIGHT + ROW_HEIGHT / 2;
+      const x2 = target.leftPx;
+      const y2 = targetIdx * ROW_HEIGHT + ROW_HEIGHT / 2;
+      const midX = x1 + Math.max(16, (x2 - x1) / 2);
+      paths.push({
+        id: link.id,
+        d: `M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`,
+      });
+    }
+    return paths;
+  });
+
+  projectMeta = computed(() => {
+    const data = this.gantt();
+    const board = this.selectedBoard();
+    if (!data) return null;
+    return {
+      name: board?.name ?? 'Proyecto',
+      start: data.projectStart ? this.parseDate(data.projectStart) : this.rangeStart(),
+      end: data.projectEnd ? this.parseDate(data.projectEnd) : this.rangeEnd(),
+      duration: data.durationLabel ?? '',
+    };
   });
 
   constructor() {
     effect(() => {
       const boards = this.workService.boards();
       const current = this.selectedBoardId();
-      if (!boards.length) {
-        return;
-      }
-      const boardId = current && boards.some(b => b.id === current) ? current : boards[0].id;
+      if (!boards.length) return;
+      const ganttBoards = boards.filter(b => b.type !== 'general');
+      const boardId = current && (current === ALL_PROJECTS || boards.some(b => b.id === current))
+        ? current
+        : (ganttBoards[0]?.id ?? boards[0].id);
       untracked(() => {
-        if (boardId !== current) {
-          this.selectedBoardId.set(boardId);
-        }
-        void this.loadGantt(boardId);
+        if (boardId !== current) this.selectedBoardId.set(boardId);
+        if (boardId !== ALL_PROJECTS) void this.loadGantt(boardId);
       });
     });
   }
 
-  statusLabel(columnId: WorkColumnId): string {
-    return WORK_STATUS_LABELS[columnId];
-  }
-
   async onBoardChange(boardId: string): Promise<void> {
     this.selectedBoardId.set(boardId);
-    await this.loadGantt(boardId);
+    if (boardId !== ALL_PROJECTS) await this.loadGantt(boardId);
   }
 
-  beginTaskEdit(event: PointerEvent, task: TimelineTask, mode: GanttEditMode): void {
+  toggleCollapse(taskId: string): void {
+    this.collapsedIds.update(set => {
+      const next = new Set(set);
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
+      return next;
+    });
+  }
+
+  scrollToToday(): void {
+    const left = this.todayLeftPx();
+    const el = this.timelineScroll()?.nativeElement;
+    if (left == null || !el) return;
+    el.scrollLeft = Math.max(left - el.clientWidth / 2, 0);
+  }
+
+  async recalculate(): Promise<void> {
+    const boardId = this.selectedBoardId();
+    if (!boardId || boardId === ALL_PROJECTS) return;
+    this.recalculating.set(true);
+    try {
+      const data = await firstValueFrom(this.workApi.recalculateGantt(boardId));
+      this.gantt.set(data);
+      this.computeRange(data);
+    } finally {
+      this.recalculating.set(false);
+    }
+  }
+
+  async exportWeeklyPlan(): Promise<void> {
+    const boardId = this.selectedBoardId();
+    const projectId = boardId && boardId !== ALL_PROJECTS ? boardId : undefined;
+    const weekStart = this.toIsoDate(this.mondayOf(this.weekPicker()));
+    this.exporting.set(true);
+    try {
+      const blob = await firstValueFrom(this.workApi.exportWeeklyPlan(projectId, weekStart));
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `Sprint_Programacion_${weekStart}.xlsx`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      this.exporting.set(false);
+    }
+  }
+
+  beginTaskEdit(event: PointerEvent, row: GanttRow, mode: GanttEditMode): void {
     event.preventDefault();
     event.stopPropagation();
-    const track = (event.currentTarget as HTMLElement).closest('.gantt-row-track') as HTMLElement | null;
+    const track = (event.currentTarget as HTMLElement).closest('.gantt-yt-track') as HTMLElement | null;
     const width = Math.max(track?.clientWidth ?? 1, 1);
     const rangeMs = Math.max(this.rangeEnd().getTime() - this.rangeStart().getTime(), MS_PER_DAY);
     this.dragState = {
-      taskId: task.id,
+      taskId: row.id,
       mode,
       startClientX: event.clientX,
-      originalStartMs: this.startOfDay(task.start).getTime(),
-      originalEndMs: this.startOfDay(task.end).getTime(),
+      originalStartMs: this.startOfDay(row.start).getTime(),
+      originalEndMs: this.startOfDay(row.end).getTime(),
       daysPerPixel: rangeMs / MS_PER_DAY / width,
     };
-    this.taskPreview.set({ taskId: task.id, start: task.start, end: task.end });
+    this.taskPreview.set({ taskId: row.id, start: row.start, end: row.end });
   }
 
   @HostListener('document:pointermove', ['$event'])
   onPointerMove(event: PointerEvent): void {
-    if (!this.dragState) {
-      return;
-    }
+    if (!this.dragState) return;
     const drag = this.dragState;
     const deltaDays = Math.round((event.clientX - drag.startClientX) * drag.daysPerPixel);
     const deltaMs = deltaDays * MS_PER_DAY;
     let nextStart = drag.originalStartMs;
     let nextEnd = drag.originalEndMs;
-
     if (drag.mode === 'move') {
       nextStart += deltaMs;
       nextEnd += deltaMs;
@@ -192,35 +357,24 @@ export class WorkGantt {
     } else {
       nextEnd = Math.max(drag.originalEndMs + deltaMs, drag.originalStartMs + MS_PER_DAY);
     }
-
-    this.taskPreview.set({
-      taskId: drag.taskId,
-      start: new Date(nextStart),
-      end: new Date(nextEnd),
-    });
+    this.taskPreview.set({ taskId: drag.taskId, start: new Date(nextStart), end: new Date(nextEnd) });
   }
 
   @HostListener('document:pointerup')
   onPointerUp(): void {
     const preview = this.taskPreview();
     const drag = this.dragState;
-    if (!preview || !drag) {
-      return;
-    }
+    if (!preview || !drag) return;
     this.dragState = null;
     this.taskPreview.set(null);
-    if (preview.start.getTime() === drag.originalStartMs && preview.end.getTime() === drag.originalEndMs) {
-      return;
-    }
+    if (preview.start.getTime() === drag.originalStartMs && preview.end.getTime() === drag.originalEndMs) return;
     void this.persistTaskDates(preview.taskId, preview.start, preview.end);
   }
 
   async addDependency(): Promise<void> {
     const source = this.dependencySourceId();
     const target = this.dependencyTargetId();
-    if (!source || !target || source === target) {
-      return;
-    }
+    if (!source || !target || source === target) return;
     this.savingDependency.set(true);
     try {
       if (environment.useApi) {
@@ -229,10 +383,7 @@ export class WorkGantt {
       } else {
         this.gantt.update(data => data ? {
           ...data,
-          links: [
-            ...data.links,
-            { id: crypto.randomUUID(), source, target, type: this.dependencyType() },
-          ],
+          links: [...data.links, { id: crypto.randomUUID(), source, target, type: this.dependencyType() }],
         } : data);
       }
       this.dependencySourceId.set(null);
@@ -243,9 +394,7 @@ export class WorkGantt {
   }
 
   async removeDependency(id: string): Promise<void> {
-    if (environment.useApi) {
-      await firstValueFrom(this.workApi.removeDependency(id));
-    }
+    if (environment.useApi) await firstValueFrom(this.workApi.removeDependency(id));
     this.gantt.update(data => data ? { ...data, links: data.links.filter(link => link.id !== id) } : data);
   }
 
@@ -254,8 +403,18 @@ export class WorkGantt {
     return task ? `${task.key} - ${task.title}` : id;
   }
 
-  dateLabel(date: Date): string {
-    return date.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' });
+  priorityLabel(priority: WorkPriority): string {
+    const labels: Record<WorkPriority, string> = {
+      low: 'Baja',
+      medium: 'Media',
+      high: 'Alta',
+      critical: 'Crítica',
+    };
+    return labels[priority] ?? priority;
+  }
+
+  issueTypeLabel(type: WorkIssueType): string {
+    return WORK_ISSUE_TYPE_LABELS[type] ?? type;
   }
 
   private async loadGantt(projectId: string): Promise<void> {
@@ -263,12 +422,12 @@ export class WorkGantt {
       this.buildLocalGantt(projectId);
       return;
     }
-
     this.loading.set(true);
     try {
       const data = await firstValueFrom(this.workApi.gantt(projectId));
       this.gantt.set(data);
       this.computeRange(data);
+      setTimeout(() => this.scrollToToday(), 0);
     } finally {
       this.loading.set(false);
     }
@@ -294,9 +453,20 @@ export class WorkGantt {
         columnId: card.columnId,
         assigneeName: this.workService.getMember(card.assigneeId)?.name ?? 'Sin asignar',
         progress: card.columnId === 'done' ? 100 : card.columnId === 'in_progress' ? 50 : 10,
+        parentId: card.parentIssueId ?? null,
+        estimateMinutes: card.estimateMinutes,
+        priority: card.priority,
+        issueType: card.issueType ?? 'FEATURE',
+        hasChildren: cards.some(c => c.parentIssueId === card.id),
       };
     });
-    const data: GanttResponse = { tasks, links: [] };
+    const data: GanttResponse = {
+      projectStart: tasks[0]?.start,
+      projectEnd: tasks[tasks.length - 1]?.end,
+      durationLabel: '',
+      tasks,
+      links: [],
+    };
     this.gantt.set(data);
     this.computeRange(data);
   }
@@ -304,17 +474,16 @@ export class WorkGantt {
   private computeRange(data: GanttResponse): void {
     if (!data.tasks.length) {
       const now = new Date();
-      this.rangeStart.set(new Date(now.getFullYear(), now.getMonth(), 1));
-      this.rangeEnd.set(new Date(now.getFullYear(), now.getMonth() + 2, 0));
+      this.rangeStart.set(this.mondayOf(now));
+      this.rangeEnd.set(new Date(this.mondayOf(now).getTime() + 34 * MS_PER_DAY));
       return;
     }
-
     const starts = data.tasks.map(t => this.parseDate(t.start).getTime());
     const ends = data.tasks.map(t => this.parseDate(t.end).getTime());
     const min = new Date(Math.min(...starts));
     const max = new Date(Math.max(...ends));
-    min.setDate(min.getDate() - 7);
-    max.setDate(max.getDate() + 14);
+    min.setDate(min.getDate() - 3);
+    max.setDate(max.getDate() + 10);
     this.rangeStart.set(min);
     this.rangeEnd.set(max);
   }
@@ -329,18 +498,54 @@ export class WorkGantt {
         const updated = await firstValueFrom(this.workApi.updateGanttTaskDates(taskId, startDate, endDate));
         this.gantt.update(data => data ? {
           ...data,
-          tasks: data.tasks.map(task => task.id === taskId ? updated : task),
+          tasks: data.tasks.map(task => task.id === taskId ? { ...task, ...updated } : task),
         } : data);
         this.workService.updateCard(taskId, { startDate, endDate, dueDate: endDate });
       } else {
         this.workService.updateCard(taskId, { startDate, endDate, dueDate: endDate });
-        if (boardId) {
-          this.buildLocalGantt(boardId);
-        }
+        if (boardId && boardId !== ALL_PROJECTS) this.buildLocalGantt(boardId);
       }
     } finally {
       this.savingTaskId.set(null);
     }
+  }
+
+  private formatEstimate(minutes: number | null | undefined): string {
+    if (!minutes || minutes <= 0) return '—';
+    if (minutes < 60) return `${minutes}m`;
+    const hours = minutes / 60;
+    if (hours < 8) return `${Math.round(hours)}h`;
+    const days = hours / 8;
+    if (days < 5) return `${Math.ceil(days)}d`;
+    const weeks = Math.floor(days / 5);
+    const remDays = Math.ceil(days % 5);
+    return remDays > 0 ? `${weeks}s ${remDays}d` : `${weeks}s`;
+  }
+
+  private barColor(columnId: WorkColumnId, priority: WorkPriority): string {
+    if (columnId === 'done' || columnId === 'closed') return 'var(--p-green-500)';
+    if (priority === 'critical' || priority === 'high') return 'var(--p-orange-500)';
+    if (columnId === 'in_progress' || columnId === 'review') return 'var(--p-blue-500)';
+    return 'var(--p-primary-500)';
+  }
+
+  private mondayOf(date: Date): Date {
+    const d = this.startOfDay(date);
+    const day = d.getDay();
+    const diff = day === 0 ? -6 : 1 - day;
+    d.setDate(d.getDate() + diff);
+    return d;
+  }
+
+  private isoWeek(date: Date): number {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    return Math.ceil((((d.getTime() - yearStart.getTime()) / MS_PER_DAY) + 1) / 7);
+  }
+
+  private isSameDay(a: Date, b: Date): boolean {
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
   }
 
   private parseDate(value: string): Date {

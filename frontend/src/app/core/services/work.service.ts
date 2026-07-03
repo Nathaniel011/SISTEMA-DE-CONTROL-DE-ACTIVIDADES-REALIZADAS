@@ -704,6 +704,8 @@ export class WorkService {
         receptionChannel: merged.receptionChannel,
         startDate: merged.startDate,
         endDate: merged.endDate,
+        issueType: merged.issueType,
+        observations: merged.observations,
       };
       return firstValueFrom(this.workApi.updateIssue(cardId, payload))
         .then(updated => {

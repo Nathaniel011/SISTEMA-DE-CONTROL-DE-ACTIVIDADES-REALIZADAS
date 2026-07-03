@@ -9,6 +9,7 @@ import {
   WorkCard,
   WorkColumnId,
   WorkComment,
+  WorkIssueType,
   WorkMember,
   WorkPriority,
   WorkTimeEntry,
@@ -32,6 +33,13 @@ export interface GanttTask {
   columnId: WorkColumnId;
   assigneeName: string;
   progress: number;
+  parentId?: string | null;
+  estimateMinutes?: number | null;
+  priority?: WorkPriority;
+  issueType?: WorkIssueType;
+  projectName?: string;
+  observations?: string | null;
+  hasChildren?: boolean;
 }
 
 export interface GanttLink {
@@ -42,8 +50,36 @@ export interface GanttLink {
 }
 
 export interface GanttResponse {
+  projectStart?: string;
+  projectEnd?: string;
+  durationLabel?: string;
   tasks: GanttTask[];
   links: GanttLink[];
+}
+
+export interface WeeklyPlanRow {
+  index: number;
+  issueKey: string;
+  projectName: string;
+  title: string;
+  members: string;
+  startDay: string;
+  endDay: string;
+  priority: string;
+  issueType: string;
+  observations: string;
+}
+
+export interface WeeklyPlanResponse {
+  weekStart: string;
+  weekEnd: string;
+  groupedByProject: boolean;
+  groups: WeeklyPlanGroup[];
+}
+
+export interface WeeklyPlanGroup {
+  projectName: string;
+  rows: WeeklyPlanRow[];
 }
 
 export interface KnowledgeArticle {
@@ -127,6 +163,8 @@ export interface UpdateIssuePayload {
   receptionChannel?: string;
   startDate?: string;
   endDate?: string;
+  issueType?: string;
+  observations?: string | null;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -211,6 +249,29 @@ export class WorkApiService {
 
   removeDependency(id: string): Observable<void> {
     return this.http.delete<void>(`${this.base}/api/dependencies/${id}`);
+  }
+
+  recalculateGantt(projectId: string): Observable<GanttResponse> {
+    return this.http.post<GanttResponse>(`${this.base}/api/gantt/recalculate`, null, {
+      params: { projectId },
+    });
+  }
+
+  getWeeklyPlan(projectId?: string, weekStart?: string): Observable<WeeklyPlanResponse> {
+    const params: Record<string, string> = {};
+    if (projectId) params['projectId'] = projectId;
+    if (weekStart) params['weekStart'] = weekStart;
+    return this.http.get<WeeklyPlanResponse>(`${this.base}/api/reports/weekly-plan`, { params });
+  }
+
+  exportWeeklyPlan(projectId?: string, weekStart?: string): Observable<Blob> {
+    const params: Record<string, string> = {};
+    if (projectId) params['projectId'] = projectId;
+    if (weekStart) params['weekStart'] = weekStart;
+    return this.http.get(`${this.base}/api/reports/weekly-plan/export`, {
+      params,
+      responseType: 'blob',
+    });
   }
 
   getReports(projectId?: string, startDate?: string, endDate?: string): Observable<any> {

@@ -150,6 +150,37 @@ public class WorkController {
         return workService.getReports(principal, projectId, startDate, endDate);
     }
 
+    @GetMapping("/reports/weekly-plan")
+    public WeeklyPlanDto weeklyPlan(
+        @AuthenticationPrincipal ScarPrincipal principal,
+        @RequestParam(required = false) UUID projectId,
+        @RequestParam(required = false) String weekStart
+    ) {
+        return workService.getWeeklyPlan(principal, projectId, weekStart);
+    }
+
+    @GetMapping("/reports/weekly-plan/export")
+    public org.springframework.http.ResponseEntity<byte[]> exportWeeklyPlan(
+        @AuthenticationPrincipal ScarPrincipal principal,
+        @RequestParam(required = false) UUID projectId,
+        @RequestParam(required = false) String weekStart
+    ) {
+        byte[] content = workService.exportWeeklyPlanExcel(principal, projectId, weekStart);
+        String fileName = workService.weeklyPlanFileName(weekStart);
+        return org.springframework.http.ResponseEntity.ok()
+            .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
+            .header(org.springframework.http.HttpHeaders.CONTENT_TYPE, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            .body(content);
+    }
+
+    @PostMapping("/gantt/recalculate")
+    public GanttDto recalculateGantt(
+        @AuthenticationPrincipal ScarPrincipal principal,
+        @RequestParam UUID projectId
+    ) {
+        return workService.recalculateGantt(principal, projectId);
+    }
+
     @GetMapping("/public/tracking/{token}")
     public WorkBootstrapDto.CardDto getPublicTracking(@PathVariable String token) {
         return workService.getPublicTracking(token);

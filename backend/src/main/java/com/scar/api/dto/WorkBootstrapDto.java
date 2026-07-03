@@ -51,6 +51,8 @@ public record WorkBootstrapDto(
         String publicToken,
         String startDate,
         String endDate,
+        String issueType,
+        String observations,
         List<AttachmentDto> attachments
     ) {}
 

@@ -40,6 +40,7 @@ public class WorkService {
     private final BoardListRepository boardListRepository;
     private final PermissionService permissionService;
     private final GeneralBoardService generalBoardService;
+    private final WeeklyPlanExcelService weeklyPlanExcelService;
 
     @Value("${scar.upload.dir:./uploads}")
     private String uploadDir;
@@ -56,7 +57,8 @@ public class WorkService {
         AttachmentRepository attachmentRepository,
         BoardListRepository boardListRepository,
         PermissionService permissionService,
-        GeneralBoardService generalBoardService
+        GeneralBoardService generalBoardService,
+        WeeklyPlanExcelService weeklyPlanExcelService
     ) {
         this.projectRepository = projectRepository;
         this.issueRepository = issueRepository;
@@ -70,6 +72,7 @@ public class WorkService {
         this.boardListRepository = boardListRepository;
         this.permissionService = permissionService;
         this.generalBoardService = generalBoardService;
+        this.weeklyPlanExcelService = weeklyPlanExcelService;
     }
 
     @Transactional(readOnly = true)
@@ -304,6 +307,12 @@ public class WorkService {
         if (req.endDate() != null) {
             issue.setEndDate(req.endDate().isBlank() ? null : LocalDate.parse(req.endDate()));
         }
+        if (req.issueType() != null && !req.issueType().isBlank()) {
+            issue.setIssueType(IssueType.valueOf(req.issueType().trim().toUpperCase(Locale.ROOT)));
+        }
+        if (req.observations() != null) {
+            issue.setObservations(req.observations().isBlank() ? null : req.observations().trim());
+        }
 
         issue = issueRepository.save(issue);
 
@@ -515,9 +524,14 @@ public class WorkService {
         permissionService.requireAccessProject(currentUser, project);
         List<Issue> issues = issueRepository.findByProjectId(projectId);
         List<IssueDependency> deps = dependencyRepository.findByProjectId(projectId);
+        Set<UUID> parentIds = issues.stream()
+            .map(Issue::getParentIssue)
+            .filter(Objects::nonNull)
+            .map(Issue::getId)
+            .collect(Collectors.toSet());
 
         List<GanttDto.GanttTaskDto> tasks = issues.stream()
-            .map(i -> toGanttTask(i, project))
+            .map(i -> toGanttTask(i, project, parentIds.contains(i.getId())))
             .toList();
 
         List<GanttDto.GanttLinkDto> links = deps.stream()
@@ -529,7 +543,143 @@ public class WorkService {
             ))
             .toList();
 
-        return new GanttDto(tasks, links);
+        LocalDate minStart = issues.stream().map(this::resolveTaskStart).min(LocalDate::compareTo).orElse(LocalDate.now());
+        LocalDate maxEnd = issues.stream().map(this::resolveTaskEnd).max(LocalDate::compareTo).orElse(minStart.plusDays(7));
+
+        return new GanttDto(
+            minStart.toString(),
+            maxEnd.toString(),
+            formatDurationLabel(minStart, maxEnd),
+            tasks,
+            links
+        );
+    }
+
+    @Transactional
+    public GanttDto recalculateGantt(ScarPrincipal principal, UUID projectId) {
+        User currentUser = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+        Project project = projectRepository.findById(projectId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        permissionService.requireAccessProject(currentUser, project);
+
+        List<Issue> issues = issueRepository.findByProjectId(projectId);
+        List<IssueDependency> deps = dependencyRepository.findByProjectId(projectId);
+        Map<UUID, Issue> byId = issues.stream().collect(Collectors.toMap(Issue::getId, i -> i));
+
+        boolean changed;
+        int guard = 0;
+        do {
+            changed = false;
+            for (IssueDependency dep : deps) {
+                Issue successor = byId.get(dep.getIssue().getId());
+                Issue predecessor = byId.get(dep.getDependsOnIssue().getId());
+                if (successor == null || predecessor == null) {
+                    continue;
+                }
+                LocalDate predStart = resolveTaskStart(predecessor);
+                LocalDate predEnd = resolveTaskEnd(predecessor);
+                LocalDate succStart = resolveTaskStart(successor);
+                LocalDate succEnd = resolveTaskEnd(successor);
+                long durationDays = Math.max(1, java.time.temporal.ChronoUnit.DAYS.between(succStart, succEnd));
+
+                LocalDate nextStart = switch (dep.getDependencyType()) {
+                    case START_TO_START -> predStart;
+                    case FINISH_TO_START -> predEnd.plusDays(1);
+                };
+                if (nextStart.isAfter(succStart)) {
+                    successor.setStartDate(nextStart);
+                    successor.setEndDate(nextStart.plusDays(durationDays));
+                    successor.setDueDate(successor.getEndDate());
+                    changed = true;
+                }
+            }
+            guard++;
+        } while (changed && guard < 50);
+
+        issueRepository.saveAll(issues);
+        return gantt(principal, projectId);
+    }
+
+    @Transactional(readOnly = true)
+    public WeeklyPlanDto getWeeklyPlan(ScarPrincipal principal, UUID projectId, String weekStartParam) {
+        LocalDate weekStart = parseWeekStart(weekStartParam);
+        LocalDate weekEnd = weekStart.plusDays(6);
+        boolean groupedByProject = projectId == null;
+
+        User currentUser = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+
+        Set<UUID> projectIds = projectRepository.findAllWithMembers().stream()
+            .filter(project -> permissionService.canAccessProject(currentUser, project))
+            .filter(project -> projectId == null || project.getId().equals(projectId))
+            .filter(project -> !groupedByProject || !isGeneralProject(project))
+            .map(Project::getId)
+            .collect(Collectors.toSet());
+
+        if (projectIds.isEmpty()) {
+            return new WeeklyPlanDto(weekStart.toString(), weekEnd.toString(), groupedByProject, List.of());
+        }
+
+        List<Issue> issues = issueRepository.findByProjectIdIn(projectIds).stream()
+            .filter(issue -> overlapsWeek(issue, weekStart, weekEnd))
+            .sorted(Comparator
+                .comparing((Issue i) -> i.getProject().getName(), String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(Issue::getStartDate, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(Issue::getIssueNumber))
+            .toList();
+
+        Map<String, List<Issue>> byProject = new LinkedHashMap<>();
+        for (Issue issue : issues) {
+            String projectName = issue.getProject().getName();
+            byProject.computeIfAbsent(projectName, key -> new ArrayList<>()).add(issue);
+        }
+
+        List<WeeklyPlanDto.WeeklyPlanGroupDto> groups = new ArrayList<>();
+        int index = 1;
+        for (Map.Entry<String, List<Issue>> entry : byProject.entrySet()) {
+            List<WeeklyPlanDto.WeeklyPlanRowDto> rows = new ArrayList<>();
+            for (Issue issue : entry.getValue()) {
+                LocalDate overlapStart = clampToBusinessDay(overlapStart(issue, weekStart, weekEnd));
+                LocalDate overlapEnd = clampToBusinessDay(overlapEnd(issue, weekStart, weekEnd));
+                if (overlapEnd.isBefore(overlapStart)) {
+                    overlapEnd = overlapStart;
+                }
+                rows.add(new WeeklyPlanDto.WeeklyPlanRowDto(
+                    index++,
+                    issue.getProject().getKeyCode() + "-" + issue.getIssueNumber(),
+                    issue.getProject().getName(),
+                    issue.getTitle(),
+                    resolveMembersLabel(issue),
+                    spanishDayName(overlapStart),
+                    spanishDayName(overlapEnd),
+                    priorityLabel(issue.getPriority()),
+                    issue.getIssueType() != null ? issue.getIssueType().label() : IssueType.FEATURE.label(),
+                    issue.getObservations() != null && !issue.getObservations().isBlank()
+                        ? issue.getObservations()
+                        : (issue.getDescription() != null ? issue.getDescription() : "")
+                ));
+            }
+            groups.add(new WeeklyPlanDto.WeeklyPlanGroupDto(entry.getKey(), rows));
+        }
+
+        return new WeeklyPlanDto(weekStart.toString(), weekEnd.toString(), groupedByProject, groups);
+    }
+
+    private boolean isGeneralProject(Project project) {
+        return project.getType() == ProjectType.GENERAL
+            || GeneralBoardService.GENERAL_BOARD_KEY.equalsIgnoreCase(project.getKeyCode())
+            || GeneralBoardService.GENERAL_BOARD_NAME.equalsIgnoreCase(project.getName());
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] exportWeeklyPlanExcel(ScarPrincipal principal, UUID projectId, String weekStartParam) {
+        WeeklyPlanDto plan = getWeeklyPlan(principal, projectId, weekStartParam);
+        return weeklyPlanExcelService.export(plan);
+    }
+
+    public String weeklyPlanFileName(String weekStartParam) {
+        return weeklyPlanExcelService.fileName(parseWeekStart(weekStartParam));
     }
 
     @Transactional
@@ -547,7 +697,7 @@ public class WorkService {
         issue.setEndDate(end);
         issue.setDueDate(end);
         issue = issueRepository.save(issue);
-        return toGanttTask(issue, issue.getProject());
+        return toGanttTask(issue, issue.getProject(), issueRepository.findByParentIssueId(issue.getId()).size() > 0);
     }
 
     @Transactional
@@ -1003,16 +1153,9 @@ public class WorkService {
         );
     }
 
-    private GanttDto.GanttTaskDto toGanttTask(Issue issue, Project project) {
-        LocalDate start = issue.getStartDate() != null
-            ? issue.getStartDate()
-            : issue.getCreatedAt().atZone(java.time.ZoneOffset.UTC).toLocalDate();
-        LocalDate end = issue.getEndDate() != null
-            ? issue.getEndDate()
-            : issue.getDueDate() != null ? issue.getDueDate() : start.plusDays(7);
-        if (end.isBefore(start)) {
-            end = start;
-        }
+    private GanttDto.GanttTaskDto toGanttTask(Issue issue, Project project, boolean hasChildren) {
+        LocalDate start = resolveTaskStart(issue);
+        LocalDate end = resolveTaskEnd(issue);
         int progress = issue.getColumnId() == IssueColumn.done || issue.getColumnId() == IssueColumn.closed ? 100
             : issue.getColumnId() == IssueColumn.in_progress || issue.getColumnId() == IssueColumn.review ? 50 : 0;
         return new GanttDto.GanttTaskDto(
@@ -1023,8 +1166,112 @@ public class WorkService {
             end.toString(),
             issue.getColumnId().name(),
             issue.getAssignee() != null ? issue.getAssignee().getFullName() : null,
-            progress
+            progress,
+            issue.getParentIssue() != null ? issue.getParentIssue().getId().toString() : null,
+            issue.getEstimateMinutes(),
+            issue.getPriority().name(),
+            issue.getIssueType() != null ? issue.getIssueType().name() : IssueType.FEATURE.name(),
+            project.getName(),
+            issue.getObservations(),
+            hasChildren
         );
+    }
+
+    private LocalDate resolveTaskStart(Issue issue) {
+        if (issue.getStartDate() != null) {
+            return issue.getStartDate();
+        }
+        return issue.getCreatedAt().atZone(java.time.ZoneOffset.UTC).toLocalDate();
+    }
+
+    private LocalDate resolveTaskEnd(Issue issue) {
+        if (issue.getEndDate() != null) {
+            return issue.getEndDate();
+        }
+        if (issue.getDueDate() != null) {
+            return issue.getDueDate();
+        }
+        LocalDate start = resolveTaskStart(issue);
+        if (issue.getEstimateMinutes() != null && issue.getEstimateMinutes() > 0) {
+            int days = Math.max(1, (int) Math.ceil(issue.getEstimateMinutes() / (8.0 * 60)));
+            return start.plusDays(days - 1L);
+        }
+        return start.plusDays(7);
+    }
+
+    private boolean overlapsWeek(Issue issue, LocalDate weekStart, LocalDate weekEnd) {
+        LocalDate start = resolveTaskStart(issue);
+        LocalDate end = resolveTaskEnd(issue);
+        return !end.isBefore(weekStart) && !start.isAfter(weekEnd);
+    }
+
+    private LocalDate overlapStart(Issue issue, LocalDate weekStart, LocalDate weekEnd) {
+        return resolveTaskStart(issue).isBefore(weekStart) ? weekStart : resolveTaskStart(issue);
+    }
+
+    private LocalDate overlapEnd(Issue issue, LocalDate weekStart, LocalDate weekEnd) {
+        return resolveTaskEnd(issue).isAfter(weekEnd) ? weekEnd : resolveTaskEnd(issue);
+    }
+
+    private String resolveMembersLabel(Issue issue) {
+        if (issue.getAssignee() != null) {
+            return issue.getAssignee().getFullName();
+        }
+        Project project = issue.getProject();
+        if (project.getMembers() != null && !project.getMembers().isEmpty()) {
+            return project.getMembers().stream()
+                .map(User::getFullName)
+                .sorted()
+                .collect(Collectors.joining(", "));
+        }
+        return "Sin asignar";
+    }
+
+    private LocalDate clampToBusinessDay(LocalDate date) {
+        return switch (date.getDayOfWeek()) {
+            case SATURDAY -> date.minusDays(1);
+            case SUNDAY -> date.plusDays(1);
+            default -> date;
+        };
+    }
+
+    private String spanishDayName(LocalDate date) {
+        String day = date.format(DateTimeFormatter.ofPattern("EEEE", new Locale("es", "ES")));
+        if (day.isEmpty()) return day;
+        return day.substring(0, 1).toUpperCase(Locale.ROOT) + day.substring(1);
+    }
+
+    private String priorityLabel(IssuePriority priority) {
+        return switch (priority) {
+            case high, critical -> "Alta";
+            case medium -> "Media";
+            case low -> "Baja";
+        };
+    }
+
+    private LocalDate parseWeekStart(String weekStartParam) {
+        if (weekStartParam == null || weekStartParam.isBlank()) {
+            LocalDate today = LocalDate.now();
+            return today.minusDays(today.getDayOfWeek().getValue() - 1L);
+        }
+        return LocalDate.parse(weekStartParam);
+    }
+
+    private String formatDurationLabel(LocalDate start, LocalDate end) {
+        long totalDays = java.time.temporal.ChronoUnit.DAYS.between(start, end) + 1;
+        long weeks = totalDays / 7;
+        long days = totalDays % 7;
+        if (weeks > 0 && days > 0) {
+            return weeks + "s " + days + "d";
+        }
+        if (weeks > 0) {
+            return weeks + "s";
+        }
+        return days + "d";
+    }
+
+    private String issueTypeValue(Issue issue) {
+        return issue.getIssueType() != null ? issue.getIssueType().name() : IssueType.FEATURE.name();
     }
 
     private WorkBootstrapDto.CardDto toCardSummary(
@@ -1060,6 +1307,8 @@ public class WorkService {
             null,
             i.getStartDate() != null ? i.getStartDate().toString() : null,
             i.getEndDate() != null ? i.getEndDate().toString() : null,
+            issueTypeValue(i),
+            i.getObservations(),
             List.of()
         );
     }
@@ -1093,6 +1342,8 @@ public class WorkService {
             null,
             i.getStartDate() != null ? i.getStartDate().toString() : null,
             i.getEndDate() != null ? i.getEndDate().toString() : null,
+            issueTypeValue(i),
+            i.getObservations(),
             List.of()
         );
     }
@@ -1126,6 +1377,8 @@ public class WorkService {
             null,
             i.getStartDate() != null ? i.getStartDate().toString() : null,
             i.getEndDate() != null ? i.getEndDate().toString() : null,
+            issueTypeValue(i),
+            i.getObservations(),
             List.of()
         );
     }
@@ -1160,6 +1413,8 @@ public class WorkService {
             null,
             i.getStartDate() != null ? i.getStartDate().toString() : null,
             i.getEndDate() != null ? i.getEndDate().toString() : null,
+            issueTypeValue(i),
+            i.getObservations(),
             mapAttachments(attachmentRepository.findByIssueIdOrderByCreatedAtDesc(issueId))
         );
     }

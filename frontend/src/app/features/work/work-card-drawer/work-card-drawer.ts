@@ -13,7 +13,7 @@ import {Tag} from 'primeng/tag';
 import {WorkService} from '../../../core/services/work.service';
 import {WorkCardDetailStore} from '../../../core/services/work-card-detail.store';
 import {PermissionsService} from '../../../core/services/permissions.service';
-import {WORK_PRIORITIES, WORK_STATUS_LABELS, WorkCard} from '../work.models';
+import {WORK_ISSUE_TYPE_OPTIONS, WORK_PRIORITIES, WORK_STATUS_LABELS, WorkCard, WorkIssueType} from '../work.models';
 import {
   formatWorkDate,
   formatWorkMinutes,
@@ -70,6 +70,10 @@ export class WorkCardDrawer {
   assigneeIdDraft = signal<string | null>(null);
   boardListIdDraft = signal<string | null>(null);
   estimateMinutesDraft = signal<number | null>(null);
+  startDateDraft = signal<Date | null>(null);
+  endDateDraft = signal<Date | null>(null);
+  issueTypeDraft = signal<WorkIssueType>('FEATURE');
+  observationsDraft = signal('');
   saving = signal(false);
   saveError = signal<string | null>(null);
   private syncedCardId = signal<string | null>(null);
@@ -149,6 +153,7 @@ export class WorkCardDrawer {
   });
 
   priorityOptions = WORK_PRIORITIES.map(p => ({ label: p.label, value: p.value }));
+  issueTypeOptions = WORK_ISSUE_TYPE_OPTIONS;
   canDelete = computed(() => this.workService.canDeleteIssues() && !!this.cardId());
 
   hasUnsavedChanges = computed(() => {
@@ -157,12 +162,18 @@ export class WorkCardDrawer {
 
     const dueIso = this.dueDateDraft() ? formatWorkDateISO(this.dueDateDraft()!) : null;
     const savedDue = c.dueDate ?? null;
+    const startIso = this.startDateDraft() ? formatWorkDateISO(this.startDateDraft()!) : null;
+    const endIso = this.endDateDraft() ? formatWorkDateISO(this.endDateDraft()!) : null;
     const title = this.normalizedTitleDraft(c);
 
     return (
       title !== c.title ||
       this.descriptionDraft().trim() !== (c.description ?? '').trim() ||
       dueIso !== savedDue ||
+      startIso !== (c.startDate ?? null) ||
+      endIso !== (c.endDate ?? null) ||
+      this.issueTypeDraft() !== (c.issueType ?? 'FEATURE') ||
+      this.observationsDraft().trim() !== (c.observations ?? '').trim() ||
       this.priorityDraft() !== c.priority ||
       this.assigneeIdDraft() !== (c.assigneeId ?? null) ||
       this.boardListIdDraft() !== (c.boardListId ?? null) ||
@@ -223,6 +234,10 @@ export class WorkCardDrawer {
     this.assigneeIdDraft.set(c.assigneeId ?? null);
     this.boardListIdDraft.set(c.boardListId ?? null);
     this.estimateMinutesDraft.set(c.estimateMinutes ?? null);
+    this.startDateDraft.set(parseWorkDate(c.startDate));
+    this.endDateDraft.set(parseWorkDate(c.endDate));
+    this.issueTypeDraft.set(c.issueType ?? 'FEATURE');
+    this.observationsDraft.set(c.observations ?? '');
     this.saveError.set(null);
   }
 
@@ -240,12 +255,20 @@ export class WorkCardDrawer {
     if (!this.isDraftCard() && !this.hasUnsavedChanges()) return;
 
     const dueIso = this.dueDateDraft() ? formatWorkDateISO(this.dueDateDraft()!) : null;
+    const startIso = this.startDateDraft() ? formatWorkDateISO(this.startDateDraft()!) : null;
+    const endIso = this.endDateDraft() ? formatWorkDateISO(this.endDateDraft()!) : null;
     const description = this.descriptionDraft().trim();
     const patch: Partial<WorkCard> = {};
 
     if (title !== c.title) patch.title = title;
     if (description !== (c.description ?? '').trim()) patch.description = description;
     if (dueIso !== (c.dueDate ?? null)) patch.dueDate = dueIso;
+    if (startIso !== (c.startDate ?? null)) patch.startDate = startIso ?? undefined;
+    if (endIso !== (c.endDate ?? null)) patch.endDate = endIso ?? undefined;
+    if (this.issueTypeDraft() !== (c.issueType ?? 'FEATURE')) patch.issueType = this.issueTypeDraft();
+    if (this.observationsDraft().trim() !== (c.observations ?? '').trim()) {
+      patch.observations = this.observationsDraft().trim();
+    }
     if (this.priorityDraft() !== c.priority) patch.priority = this.priorityDraft();
     if (this.assigneeIdDraft() !== (c.assigneeId ?? null)) {
       patch.assigneeId = this.assigneeIdDraft();

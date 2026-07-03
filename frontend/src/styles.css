@@ -215,6 +215,36 @@
   @apply absolute top-1/2 left-1/2 h-4 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/80;
 }
 
+.gantt-yt-weekend {
+  @apply text-surface-400;
+}
+
+.gantt-yt-weekend-col {
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 4px,
+    color-mix(in srgb, var(--p-surface-300) 35%, transparent) 4px,
+    color-mix(in srgb, var(--p-surface-300) 35%, transparent) 8px
+  );
+  pointer-events: none;
+}
+
+.gantt-yt-today-line {
+  width: 2px;
+  background: var(--p-primary-500);
+  z-index: 5;
+  pointer-events: none;
+}
+
+.gantt-yt-toggle {
+  @apply border-0 bg-transparent p-0 w-4 h-4 flex items-center justify-center text-surface-500 cursor-pointer;
+}
+
+.gantt-yt-links {
+  z-index: 2;
+}
+
 .yt-search-bar {
   @apply flex items-center gap-2 px-6 py-3 border-b border-surface-200 bg-surface-50 shrink-0;
 }

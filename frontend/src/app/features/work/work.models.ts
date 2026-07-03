@@ -1,5 +1,34 @@
 export type WorkPriority = 'low' | 'medium' | 'high' | 'critical';
+export type WorkIssueType =
+  | 'OPERACION'
+  | 'FEATURE'
+  | 'ANALISIS_UI'
+  | 'UI'
+  | 'ANALISIS'
+  | 'DESPLIEGUE'
+  | 'PRUEBAS'
+  | 'CORRECCION'
+  | 'MIGRACION'
+  | 'QA';
 export type WorkColumnId = 'registered' | 'in_assignment' | 'backlog' | 'todo' | 'in_progress' | 'review' | 'done' | 'closed';
+
+export const WORK_ISSUE_TYPE_LABELS: Record<WorkIssueType, string> = {
+  OPERACION: 'Operación',
+  FEATURE: 'Feature',
+  ANALISIS_UI: 'Análisis/UI',
+  UI: 'UI',
+  ANALISIS: 'Análisis',
+  DESPLIEGUE: 'Despliegue',
+  PRUEBAS: 'Pruebas',
+  CORRECCION: 'Corrección',
+  MIGRACION: 'Migración',
+  QA: 'QA',
+};
+
+export const WORK_ISSUE_TYPE_OPTIONS = (Object.keys(WORK_ISSUE_TYPE_LABELS) as WorkIssueType[]).map(value => ({
+  label: WORK_ISSUE_TYPE_LABELS[value],
+  value,
+}));
 
 export const WORK_STATUS_LABELS: Record<WorkColumnId, string> = {
   registered: 'Registrada',
@@ -80,6 +109,8 @@ export interface WorkCard {
   publicToken?: string;
   startDate?: string;
   endDate?: string;
+  issueType?: WorkIssueType;
+  observations?: string | null;
 }
 
 export interface WorkBoard {

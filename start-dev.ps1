@@ -6,6 +6,10 @@ $root = $PSScriptRoot
 $envFile = Join-Path $root "dev\local.env"
 $exampleFile = Join-Path $root "dev\local.env.example"
 $psql = "C:\Program Files\PostgreSQL\16\bin\psql.exe"
+$mavenBin = Join-Path $root "..\tools\apache-maven-3.9.9\bin"
+if ((Test-Path $mavenBin) -and -not (Get-Command mvn -ErrorAction SilentlyContinue)) {
+    $env:Path = "$mavenBin;$env:Path"
+}
 
 if (-not (Test-Path $envFile)) {
     Copy-Item $exampleFile $envFile
@@ -44,7 +48,7 @@ Write-Host "Arrancando backend (http://localhost:8080)..."
 Start-Process powershell -ArgumentList @(
     "-NoExit",
     "-Command",
-    "Set-Location '$root\backend'; mvn spring-boot:run"
+    "Set-Location '$root\backend'; `$env:Path = '$mavenBin;' + `$env:Path; Get-Content '$envFile' | ForEach-Object { if (`$_ -match '^\s*([^#=]+?)=(.*)$') { Set-Item -Path `"Env:`$(`$matches[1].Trim())`" -Value `$matches[2].Trim() } }; mvn spring-boot:run"
 )
 
 Start-Sleep -Seconds 2
