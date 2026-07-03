@@ -8,10 +8,10 @@ import {Select} from 'primeng/select';
 import {Tag} from 'primeng/tag';
 import {ProgressSpinner} from 'primeng/progressspinner';
 import {WorkService} from '../../../core/services/work.service';
-import {GanttResponse, WorkApiService} from '../../../core/services/work-api.service';
+import {GanttResponse, GanttTask, WorkApiService} from '../../../core/services/work-api.service';
 import {environment} from '../../../../environments/environment';
 import {firstValueFrom} from 'rxjs';
-import {WORK_ISSUE_TYPE_LABELS, WorkColumnId, WorkIssueType, WorkPriority} from '../work.models';
+import {WORK_ISSUE_TYPE_LABELS, WorkCard, WorkColumnId, WorkIssueType, WorkPriority} from '../work.models';
 
 interface GanttRow {
   id: string;
@@ -33,6 +33,8 @@ interface GanttRow {
   barColor: string;
   leftPx: number;
   widthPx: number;
+  rowType: 'PROJECT' | 'LIST' | 'TASK';
+  isSection: boolean;
 }
 
 interface DayColumn {
@@ -93,8 +95,8 @@ export class WorkGantt {
   private dragState: GanttDragState | null = null;
 
   boardOptions = computed(() => [
-    { label: 'Todos los proyectos (sin Tablero general)', value: ALL_PROJECTS },
-    ...this.workService.boards().map(b => ({ label: b.name, value: b.id })),
+    { label: 'Todos los proyectos', value: ALL_PROJECTS },
+    ...this.workService.boards().filter(b => b.type !== 'general').map(b => ({ label: b.name, value: b.id })),
   ]);
 
   selectedBoard = computed(() => {
@@ -104,10 +106,12 @@ export class WorkGantt {
   });
 
   taskOptions = computed(() =>
-    (this.gantt()?.tasks ?? []).map(task => ({
-      label: `${task.key} - ${task.title}`,
-      value: task.id,
-    }))
+    (this.gantt()?.tasks ?? [])
+      .filter(task => (task.rowType ?? 'TASK') === 'TASK')
+      .map(task => ({
+        label: `${task.key} - ${task.title}`,
+        value: task.id,
+      }))
   );
 
   dependencyTypeOptions = [
@@ -172,48 +176,64 @@ export class WorkGantt {
     const preview = this.taskPreview();
     const collapsed = this.collapsedIds();
     const startMs = this.rangeStart().getTime();
-    const byParent = new Map<string | null, typeof data.tasks>();
-    for (const task of data.tasks) {
-      const parent = task.parentId ?? null;
-      const list = byParent.get(parent) ?? [];
-      list.push(task);
-      byParent.set(parent, list);
-    }
+    const parentById = new Map(data.tasks.map(t => [t.id, t.parentId ?? null]));
+
+    const isHidden = (taskId: string): boolean => {
+      let parentId = parentById.get(taskId) ?? null;
+      while (parentId) {
+        if (collapsed.has(parentId)) return true;
+        parentId = parentById.get(parentId) ?? null;
+      }
+      return false;
+    };
+
+    const depthOf = (taskId: string): number => {
+      let depth = 0;
+      let parentId = parentById.get(taskId) ?? null;
+      while (parentId) {
+        depth++;
+        parentId = parentById.get(parentId) ?? null;
+      }
+      return depth;
+    };
 
     const rows: GanttRow[] = [];
-    const walk = (parentId: string | null, depth: number) => {
-      const children = byParent.get(parentId) ?? [];
-      for (const task of children) {
-        if (parentId && collapsed.has(parentId)) continue;
-        const start = preview?.taskId === task.id ? preview.start : this.parseDate(task.start);
-        const end = preview?.taskId === task.id ? preview.end : this.parseDate(task.end);
-        const leftDays = (this.startOfDay(start).getTime() - startMs) / MS_PER_DAY;
-        const widthDays = Math.max((this.startOfDay(end).getTime() - this.startOfDay(start).getTime()) / MS_PER_DAY + 1, 1);
-        rows.push({
-          id: task.id,
-          key: task.key,
-          title: task.title,
-          start,
-          end,
-          columnId: task.columnId,
-          assigneeName: task.assigneeName ?? 'Sin asignar',
-          progress: task.progress,
-          parentId: task.parentId ?? null,
-          estimateMinutes: task.estimateMinutes ?? null,
-          priority: (task.priority ?? 'medium') as WorkPriority,
-          issueType: (task.issueType ?? 'FEATURE') as WorkIssueType,
-          hasChildren: !!task.hasChildren,
-          depth,
-          estimateLabel: this.formatEstimate(task.estimateMinutes),
-          startLabel: start.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }),
-          barColor: this.barColor(task.columnId, task.priority as WorkPriority),
-          leftPx: Math.max(leftDays * DAY_WIDTH, 0),
-          widthPx: Math.max(widthDays * DAY_WIDTH - 4, 12),
-        });
-        walk(task.id, depth + 1);
-      }
-    };
-    walk(null, 0);
+    for (const task of data.tasks) {
+      if (isHidden(task.id)) continue;
+
+      const rowType = (task.rowType ?? 'TASK') as GanttRow['rowType'];
+      const isSection = rowType === 'PROJECT' || rowType === 'LIST';
+      const start = preview?.taskId === task.id ? preview.start : this.parseDate(task.start);
+      const end = preview?.taskId === task.id ? preview.end : this.parseDate(task.end);
+      const leftDays = (this.startOfDay(start).getTime() - startMs) / MS_PER_DAY;
+      const widthDays = Math.max((this.startOfDay(end).getTime() - this.startOfDay(start).getTime()) / MS_PER_DAY + 1, 1);
+
+      rows.push({
+        id: task.id,
+        key: task.key,
+        title: task.title,
+        start,
+        end,
+        columnId: (task.columnId ?? 'backlog') as WorkColumnId,
+        assigneeName: task.assigneeName ?? 'Sin asignar',
+        progress: task.progress,
+        parentId: task.parentId ?? null,
+        estimateMinutes: task.estimateMinutes ?? null,
+        priority: (task.priority ?? 'medium') as WorkPriority,
+        issueType: (task.issueType ?? 'FEATURE') as WorkIssueType,
+        hasChildren: !!task.hasChildren,
+        depth: depthOf(task.id),
+        estimateLabel: isSection ? '—' : this.formatEstimate(task.estimateMinutes),
+        startLabel: isSection ? '—' : start.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }),
+        barColor: isSection
+          ? rowType === 'PROJECT' ? 'var(--p-surface-400)' : 'var(--p-surface-300)'
+          : this.barColor(task.columnId as WorkColumnId, task.priority as WorkPriority),
+        leftPx: Math.max(leftDays * DAY_WIDTH, 0),
+        widthPx: Math.max(widthDays * DAY_WIDTH - 4, isSection ? 20 : 12),
+        rowType,
+        isSection,
+      });
+    }
     return rows;
   });
 
@@ -231,6 +251,7 @@ export class WorkGantt {
       if (sourceIdx == null || targetIdx == null) continue;
       const source = rows[sourceIdx];
       const target = rows[targetIdx];
+      if (source.isSection || target.isSection) continue;
       const x1 = source.leftPx + source.widthPx;
       const y1 = sourceIdx * ROW_HEIGHT + ROW_HEIGHT / 2;
       const x2 = target.leftPx;
@@ -246,10 +267,11 @@ export class WorkGantt {
 
   projectMeta = computed(() => {
     const data = this.gantt();
-    const board = this.selectedBoard();
     if (!data) return null;
+    const board = this.selectedBoard();
+    const isAll = this.selectedBoardId() === ALL_PROJECTS;
     return {
-      name: board?.name ?? 'Proyecto',
+      name: isAll ? 'Todos los proyectos' : (board?.name ?? 'Proyecto'),
       start: data.projectStart ? this.parseDate(data.projectStart) : this.rangeStart(),
       end: data.projectEnd ? this.parseDate(data.projectEnd) : this.rangeEnd(),
       duration: data.durationLabel ?? '',
@@ -264,17 +286,18 @@ export class WorkGantt {
       const ganttBoards = boards.filter(b => b.type !== 'general');
       const boardId = current && (current === ALL_PROJECTS || boards.some(b => b.id === current))
         ? current
-        : (ganttBoards[0]?.id ?? boards[0].id);
+        : ALL_PROJECTS;
       untracked(() => {
         if (boardId !== current) this.selectedBoardId.set(boardId);
-        if (boardId !== ALL_PROJECTS) void this.loadGantt(boardId);
+        void this.loadGantt(boardId);
       });
     });
   }
 
   async onBoardChange(boardId: string): Promise<void> {
     this.selectedBoardId.set(boardId);
-    if (boardId !== ALL_PROJECTS) await this.loadGantt(boardId);
+    this.collapsedIds.set(new Set());
+    await this.loadGantt(boardId);
   }
 
   toggleCollapse(taskId: string): void {
@@ -325,6 +348,7 @@ export class WorkGantt {
   }
 
   beginTaskEdit(event: PointerEvent, row: GanttRow, mode: GanttEditMode): void {
+    if (row.isSection) return;
     event.preventDefault();
     event.stopPropagation();
     const track = (event.currentTarget as HTMLElement).closest('.gantt-yt-track') as HTMLElement | null;
@@ -417,14 +441,16 @@ export class WorkGantt {
     return WORK_ISSUE_TYPE_LABELS[type] ?? type;
   }
 
-  private async loadGantt(projectId: string): Promise<void> {
+  private async loadGantt(boardId: string): Promise<void> {
     if (!environment.useApi) {
-      this.buildLocalGantt(projectId);
+      this.buildLocalGantt(boardId);
       return;
     }
     this.loading.set(true);
     try {
-      const data = await firstValueFrom(this.workApi.gantt(projectId));
+      const data = await firstValueFrom(
+        boardId === ALL_PROJECTS ? this.workApi.gantt() : this.workApi.gantt(boardId)
+      );
       this.gantt.set(data);
       this.computeRange(data);
       setTimeout(() => this.scrollToToday(), 0);
@@ -433,42 +459,108 @@ export class WorkGantt {
     }
   }
 
-  private buildLocalGantt(projectId: string): void {
-    const cards = this.workService.cards().filter(c => c.boardId === projectId);
+  private buildLocalGantt(boardId: string): void {
+    const boards = boardId === ALL_PROJECTS
+      ? this.workService.boards().filter(b => b.type !== 'general')
+      : this.workService.boards().filter(b => b.id === boardId);
     const today = new Date();
-    const tasks = cards.map((card, index) => {
-      const start = card.dueDate
-        ? new Date(this.parseDate(card.dueDate).getTime() - 7 * MS_PER_DAY)
-        : new Date(today.getTime() + index * MS_PER_DAY);
-      const taskStart = card.startDate ? this.parseDate(card.startDate) : start;
-      const end = card.endDate
-        ? this.parseDate(card.endDate)
-        : card.dueDate ? this.parseDate(card.dueDate) : new Date(taskStart.getTime() + 5 * MS_PER_DAY);
-      return {
-        id: card.id,
-        key: this.workService.getIssueKey(card),
-        title: card.title,
-        start: this.toIsoDate(taskStart),
-        end: this.toIsoDate(end),
-        columnId: card.columnId,
-        assigneeName: this.workService.getMember(card.assigneeId)?.name ?? 'Sin asignar',
-        progress: card.columnId === 'done' ? 100 : card.columnId === 'in_progress' ? 50 : 10,
-        parentId: card.parentIssueId ?? null,
-        estimateMinutes: card.estimateMinutes,
-        priority: card.priority,
-        issueType: card.issueType ?? 'FEATURE',
-        hasChildren: cards.some(c => c.parentIssueId === card.id),
-      };
-    });
+    const tasks: GanttTask[] = [];
+
+    for (const board of boards) {
+      if (boardId === ALL_PROJECTS) {
+        tasks.push({
+          id: `section-project-${board.id}`,
+          key: board.key,
+          title: board.name,
+          start: this.toIsoDate(today),
+          end: this.toIsoDate(new Date(today.getTime() + 7 * MS_PER_DAY)),
+          columnId: 'backlog',
+          assigneeName: '',
+          progress: 0,
+          parentId: null,
+          hasChildren: true,
+          rowType: 'PROJECT',
+          projectId: board.id,
+        });
+      }
+
+      const lists = this.workService.getBoardLists(board.id);
+      const cards = this.workService.cards().filter(c => c.boardId === board.id);
+      const listParent = boardId === ALL_PROJECTS ? `section-project-${board.id}` : null;
+
+      for (const list of lists) {
+        const listCards = cards.filter(c => c.boardListId === list.id);
+        if (!listCards.length) continue;
+        const listSectionId = `section-list-${list.id}`;
+        tasks.push({
+          id: listSectionId,
+          key: '',
+          title: list.name,
+          start: this.toIsoDate(today),
+          end: this.toIsoDate(new Date(today.getTime() + 7 * MS_PER_DAY)),
+          columnId: 'backlog',
+          assigneeName: '',
+          progress: 0,
+          parentId: listParent,
+          hasChildren: true,
+          rowType: 'LIST',
+          projectId: board.id,
+          boardListId: list.id,
+        });
+
+        const roots = listCards.filter(c => !c.parentIssueId || !listCards.some(x => x.id === c.parentIssueId));
+        for (const card of roots) {
+          this.appendLocalCardTree(tasks, card, listSectionId, board.id, cards, today);
+        }
+      }
+    }
+
     const data: GanttResponse = {
-      projectStart: tasks[0]?.start,
-      projectEnd: tasks[tasks.length - 1]?.end,
+      projectStart: this.toIsoDate(today),
+      projectEnd: this.toIsoDate(new Date(today.getTime() + 14 * MS_PER_DAY)),
       durationLabel: '',
+      hierarchical: true,
       tasks,
       links: [],
     };
     this.gantt.set(data);
     this.computeRange(data);
+  }
+
+  private appendLocalCardTree(
+    tasks: GanttTask[],
+    card: WorkCard,
+    parentId: string,
+    boardId: string,
+    allCards: WorkCard[],
+    today: Date
+  ): void {
+    const taskStart = card.startDate ? this.parseDate(card.startDate) : today;
+    const end = card.endDate
+      ? this.parseDate(card.endDate)
+      : card.dueDate ? this.parseDate(card.dueDate) : new Date(taskStart.getTime() + 5 * MS_PER_DAY);
+    const children = allCards.filter(c => c.parentIssueId === card.id);
+    tasks.push({
+      id: card.id,
+      key: this.workService.getIssueKey(card),
+      title: card.title,
+      start: this.toIsoDate(taskStart),
+      end: this.toIsoDate(end),
+      columnId: card.columnId,
+      assigneeName: this.workService.getMember(card.assigneeId)?.name ?? 'Sin asignar',
+      progress: card.columnId === 'done' ? 100 : card.columnId === 'in_progress' ? 50 : 10,
+      parentId,
+      estimateMinutes: card.estimateMinutes,
+      priority: card.priority,
+      issueType: card.issueType ?? 'FEATURE',
+      hasChildren: children.length > 0,
+      rowType: 'TASK',
+      projectId: boardId,
+      boardListId: card.boardListId,
+    });
+    for (const child of children) {
+      this.appendLocalCardTree(tasks, child, card.id, boardId, allCards, today);
+    }
   }
 
   private computeRange(data: GanttResponse): void {

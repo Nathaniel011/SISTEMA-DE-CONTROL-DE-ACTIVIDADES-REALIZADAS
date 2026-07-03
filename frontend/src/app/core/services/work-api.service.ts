@@ -40,6 +40,9 @@ export interface GanttTask {
   projectName?: string;
   observations?: string | null;
   hasChildren?: boolean;
+  rowType?: 'PROJECT' | 'LIST' | 'TASK';
+  projectId?: string;
+  boardListId?: string | null;
 }
 
 export interface GanttLink {
@@ -53,6 +56,7 @@ export interface GanttResponse {
   projectStart?: string;
   projectEnd?: string;
   durationLabel?: string;
+  hierarchical?: boolean;
   tasks: GanttTask[];
   links: GanttLink[];
 }
@@ -232,8 +236,10 @@ export class WorkApiService {
     return this.http.get<TimeEntryWithIssue[]>(`${this.base}/api/time/entries`);
   }
 
-  gantt(projectId: string): Observable<GanttResponse> {
-    return this.http.get<GanttResponse>(`${this.base}/api/gantt`, { params: { projectId } });
+  gantt(projectId?: string): Observable<GanttResponse> {
+    const params: Record<string, string> = {};
+    if (projectId) params['projectId'] = projectId;
+    return this.http.get<GanttResponse>(`${this.base}/api/gantt`, { params });
   }
 
   updateGanttTaskDates(issueId: string, start: string, end: string): Observable<GanttTask> {

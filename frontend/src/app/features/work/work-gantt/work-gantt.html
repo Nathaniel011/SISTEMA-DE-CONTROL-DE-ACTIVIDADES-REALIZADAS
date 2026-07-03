@@ -48,12 +48,7 @@
     </div>
   </div>
 
-  @if (selectedBoardId() === '__all__') {
-    <div class="yt-placeholder">
-      <i class="pi pi-file-excel yt-placeholder-icon"></i>
-      <p class="text-surface-500 m-0">Selecciona una semana y pulsa <strong>Exportar Excel</strong>. Se agrupa por proyecto (sin Tablero general).</p>
-    </div>
-  } @else if (loading()) {
+  @if (loading()) {
     <div class="flex justify-center py-16">
       <p-progressSpinner />
     </div>
@@ -102,7 +97,12 @@
       <div class="gantt-yt-body grid max-h-[calc(100vh-18rem)] overflow-y-auto" style="grid-template-columns: minmax(18rem, 22rem) 1fr;">
         <div class="gantt-yt-table border-r border-surface-200">
           @for (row of visibleRows(); track row.id) {
-            <div class="gantt-yt-table-row grid grid-cols-[1fr_4.5rem_5.5rem] border-b border-surface-100 text-sm" [style.height.px]="44">
+            <div
+              class="gantt-yt-table-row grid grid-cols-[1fr_4.5rem_5.5rem] border-b border-surface-100 text-sm"
+              [class.gantt-yt-section-project]="row.rowType === 'PROJECT'"
+              [class.gantt-yt-section-list]="row.rowType === 'LIST'"
+              [style.height.px]="44"
+            >
               <div class="px-2 py-2 flex items-center gap-1 min-w-0" [style.padding-left.rem]="0.75 + row.depth * 1">
                 @if (row.hasChildren) {
                   <button type="button" class="gantt-yt-toggle" (click)="toggleCollapse(row.id)">
@@ -111,8 +111,10 @@
                 } @else {
                   <span class="w-4"></span>
                 }
-                <span class="font-mono text-xs text-surface-500 shrink-0">{{ row.key }}</span>
-                <span class="truncate" [title]="row.title">{{ row.title }}</span>
+                @if (row.key && row.rowType === 'TASK') {
+                  <span class="font-mono text-xs text-surface-500 shrink-0">{{ row.key }}</span>
+                }
+                <span class="truncate" [class.font-semibold]="row.isSection" [title]="row.title">{{ row.title }}</span>
               </div>
               <div class="px-2 py-2 border-l border-surface-100 text-xs text-surface-600 flex items-center">{{ row.estimateLabel }}</div>
               <div class="px-2 py-2 border-l border-surface-100 text-xs text-surface-600 flex items-center">{{ row.startLabel }}</div>
@@ -147,7 +149,11 @@
             @for (row of visibleRows(); track row.id; let i = $index) {
               <div class="gantt-yt-track absolute left-0 right-0 border-b border-surface-100" [style.top.px]="i * 44" [style.height.px]="44">
                 <div
-                  class="gantt-bar absolute top-1/2 -translate-y-1/2 h-6 rounded shadow-sm overflow-hidden cursor-grab touch-none text-[10px] text-white flex items-center px-1 truncate"
+                  class="gantt-bar absolute top-1/2 -translate-y-1/2 rounded shadow-sm overflow-hidden touch-none text-[10px] flex items-center px-1 truncate"
+                  [class.h-6]="!row.isSection"
+                  [class.h-4]="row.isSection"
+                  [class.cursor-grab]="!row.isSection"
+                  [class.opacity-80]="row.isSection"
                   [class.ring-2]="savingTaskId() === row.id"
                   [class.ring-primary-300]="savingTaskId() === row.id"
                   [style.left.px]="row.leftPx"
@@ -156,10 +162,12 @@
                   [title]="row.title"
                   (pointerdown)="beginTaskEdit($event, row, 'move')"
                 >
-                  <button type="button" class="gantt-resize-handle left-0" (pointerdown)="beginTaskEdit($event, row, 'resize-start')"></button>
-                  <span class="truncate pointer-events-none">{{ row.key }} {{ row.title }}</span>
-                  <div class="absolute inset-y-0 left-0 opacity-30" [style.width.%]="row.progress" style="background: rgba(0,0,0,.25)"></div>
-                  <button type="button" class="gantt-resize-handle right-0" (pointerdown)="beginTaskEdit($event, row, 'resize-end')"></button>
+                  @if (!row.isSection) {
+                    <button type="button" class="gantt-resize-handle left-0" (pointerdown)="beginTaskEdit($event, row, 'resize-start')"></button>
+                    <span class="truncate pointer-events-none text-white">{{ row.key }} {{ row.title }}</span>
+                    <div class="absolute inset-y-0 left-0 opacity-30" [style.width.%]="row.progress" style="background: rgba(0,0,0,.25)"></div>
+                    <button type="button" class="gantt-resize-handle right-0" (pointerdown)="beginTaskEdit($event, row, 'resize-end')"></button>
+                  }
                 </div>
               </div>
             }

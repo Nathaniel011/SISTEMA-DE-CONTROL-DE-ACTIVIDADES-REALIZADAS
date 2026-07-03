@@ -6,6 +6,7 @@ public record GanttDto(
     String projectStart,
     String projectEnd,
     String durationLabel,
+    boolean hierarchical,
     List<GanttTaskDto> tasks,
     List<GanttLinkDto> links
 ) {
@@ -24,7 +25,10 @@ public record GanttDto(
         String issueType,
         String projectName,
         String observations,
-        boolean hasChildren
+        boolean hasChildren,
+        String rowType,
+        String projectId,
+        String boardListId
     ) {}
     public record GanttLinkDto(String id, String source, String target, String type) {}
 }

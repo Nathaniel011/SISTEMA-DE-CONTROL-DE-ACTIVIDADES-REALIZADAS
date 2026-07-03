@@ -237,6 +237,14 @@
   pointer-events: none;
 }
 
+.gantt-yt-section-project {
+  @apply bg-surface-100 font-semibold;
+}
+
+.gantt-yt-section-list {
+  @apply bg-surface-50;
+}
+
 .gantt-yt-toggle {
   @apply border-0 bg-transparent p-0 w-4 h-4 flex items-center justify-center text-surface-500 cursor-pointer;
 }

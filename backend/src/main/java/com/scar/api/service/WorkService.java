@@ -516,24 +516,85 @@ public class WorkService {
     }
 
     @Transactional(readOnly = true)
+    public GanttDto ganttAll(ScarPrincipal principal) {
+        User currentUser = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+        List<Project> projects = projectRepository.findAllWithMembers().stream()
+            .filter(project -> permissionService.canAccessProject(currentUser, project))
+            .filter(project -> !isGeneralProject(project))
+            .sorted(Comparator.comparing(Project::getName, String.CASE_INSENSITIVE_ORDER))
+            .toList();
+        return buildHierarchicalGantt(projects, true);
+    }
+
+    @Transactional(readOnly = true)
     public GanttDto gantt(ScarPrincipal principal, UUID projectId) {
         User currentUser = userRepository.findByIdWithRoles(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         Project project = projectRepository.findById(projectId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         permissionService.requireAccessProject(currentUser, project);
-        List<Issue> issues = issueRepository.findByProjectId(projectId);
-        List<IssueDependency> deps = dependencyRepository.findByProjectId(projectId);
-        Set<UUID> parentIds = issues.stream()
-            .map(Issue::getParentIssue)
-            .filter(Objects::nonNull)
-            .map(Issue::getId)
-            .collect(Collectors.toSet());
+        return buildHierarchicalGantt(List.of(project), false);
+    }
 
-        List<GanttDto.GanttTaskDto> tasks = issues.stream()
-            .map(i -> toGanttTask(i, project, parentIds.contains(i.getId())))
-            .toList();
+    private GanttDto buildHierarchicalGantt(List<Project> projects, boolean includeProjectSections) {
+        if (projects.isEmpty()) {
+            LocalDate today = LocalDate.now();
+            return new GanttDto(today.toString(), today.plusDays(7).toString(), "7d", true, List.of(), List.of());
+        }
 
+        Set<UUID> projectIds = projects.stream().map(Project::getId).collect(Collectors.toSet());
+        List<Issue> allIssues = issueRepository.findByProjectIdIn(projectIds);
+        Map<UUID, List<Issue>> issuesByProject = allIssues.stream()
+            .collect(Collectors.groupingBy(i -> i.getProject().getId()));
+        Map<UUID, List<Issue>> childrenByParent = allIssues.stream()
+            .filter(i -> i.getParentIssue() != null)
+            .collect(Collectors.groupingBy(i -> i.getParentIssue().getId()));
+
+        List<GanttDto.GanttTaskDto> rows = new ArrayList<>();
+        for (Project project : projects) {
+            String projectSectionId = "section-project-" + project.getId();
+            List<Issue> projectIssues = issuesByProject.getOrDefault(project.getId(), List.of());
+            DateRange projectRange = dateRangeForIssues(projectIssues);
+
+            if (includeProjectSections) {
+                rows.add(sectionRow(
+                    "PROJECT",
+                    projectSectionId,
+                    null,
+                    project.getKeyCode(),
+                    project.getName(),
+                    projectRange,
+                    project.getId().toString(),
+                    null
+                ));
+            }
+
+            String listParentId = includeProjectSections ? projectSectionId : null;
+            List<BoardList> lists = boardListRepository.findByProjectIdAndArchivedFalseOrderBySortOrderAsc(project.getId());
+            Map<UUID, List<Issue>> issuesByList = projectIssues.stream()
+                .filter(i -> i.getBoardList() != null)
+                .collect(Collectors.groupingBy(i -> i.getBoardList().getId()));
+
+            Set<UUID> issuesInLists = issuesByList.values().stream()
+                .flatMap(List::stream)
+                .map(Issue::getId)
+                .collect(Collectors.toSet());
+
+            for (BoardList list : lists) {
+                appendListSection(rows, project, list, issuesByList.getOrDefault(list.getId(), List.of()),
+                    listParentId, childrenByParent);
+            }
+
+            List<Issue> unlisted = projectIssues.stream()
+                .filter(i -> i.getBoardList() == null)
+                .toList();
+            if (!unlisted.isEmpty()) {
+                appendListSection(rows, project, null, unlisted, listParentId, childrenByParent);
+            }
+        }
+
+        List<IssueDependency> deps = dependencyRepository.findByProjectIdIn(projectIds);
         List<GanttDto.GanttLinkDto> links = deps.stream()
             .map(d -> new GanttDto.GanttLinkDto(
                 d.getId().toString(),
@@ -543,17 +604,119 @@ public class WorkService {
             ))
             .toList();
 
-        LocalDate minStart = issues.stream().map(this::resolveTaskStart).min(LocalDate::compareTo).orElse(LocalDate.now());
-        LocalDate maxEnd = issues.stream().map(this::resolveTaskEnd).max(LocalDate::compareTo).orElse(minStart.plusDays(7));
+        LocalDate minStart = allIssues.stream().map(this::resolveTaskStart).min(LocalDate::compareTo)
+            .orElse(LocalDate.now());
+        LocalDate maxEnd = allIssues.stream().map(this::resolveTaskEnd).max(LocalDate::compareTo)
+            .orElse(minStart.plusDays(7));
 
         return new GanttDto(
             minStart.toString(),
             maxEnd.toString(),
             formatDurationLabel(minStart, maxEnd),
-            tasks,
+            true,
+            rows,
             links
         );
     }
+
+    private void appendListSection(
+        List<GanttDto.GanttTaskDto> rows,
+        Project project,
+        BoardList list,
+        List<Issue> listIssues,
+        String listParentId,
+        Map<UUID, List<Issue>> childrenByParent
+    ) {
+        if (listIssues.isEmpty()) {
+            return;
+        }
+        String listSectionId = list != null
+            ? "section-list-" + list.getId()
+            : "section-list-none-" + project.getId();
+        String listName = list != null ? list.getName() : "Sin lista";
+        DateRange listRange = dateRangeForIssues(listIssues);
+
+        rows.add(sectionRow(
+            "LIST",
+            listSectionId,
+            listParentId,
+            "",
+            listName,
+            listRange,
+            project.getId().toString(),
+            list != null ? list.getId().toString() : null
+        ));
+
+        Set<UUID> listIssueIds = listIssues.stream().map(Issue::getId).collect(Collectors.toSet());
+        List<Issue> roots = listIssues.stream()
+            .filter(i -> i.getParentIssue() == null || !listIssueIds.contains(i.getParentIssue().getId()))
+            .sorted(Comparator.comparingInt(Issue::getSortOrder).thenComparingInt(Issue::getIssueNumber))
+            .toList();
+
+        for (Issue root : roots) {
+            appendIssueTree(rows, root, listSectionId, project, childrenByParent);
+        }
+    }
+
+    private void appendIssueTree(
+        List<GanttDto.GanttTaskDto> rows,
+        Issue issue,
+        String parentId,
+        Project project,
+        Map<UUID, List<Issue>> childrenByParent
+    ) {
+        List<Issue> children = childrenByParent.getOrDefault(issue.getId(), List.of()).stream()
+            .sorted(Comparator.comparingInt(Issue::getSortOrder).thenComparingInt(Issue::getIssueNumber))
+            .toList();
+        rows.add(toGanttTask(issue, project, !children.isEmpty(), parentId));
+        for (Issue child : children) {
+            appendIssueTree(rows, child, issue.getId().toString(), project, childrenByParent);
+        }
+    }
+
+    private GanttDto.GanttTaskDto sectionRow(
+        String rowType,
+        String id,
+        String parentId,
+        String key,
+        String title,
+        DateRange range,
+        String projectId,
+        String boardListId
+    ) {
+        return new GanttDto.GanttTaskDto(
+            id,
+            key,
+            title,
+            range.start().toString(),
+            range.end().toString(),
+            "backlog",
+            null,
+            0,
+            parentId,
+            null,
+            "medium",
+            "FEATURE",
+            title,
+            null,
+            true,
+            rowType,
+            projectId,
+            boardListId
+        );
+    }
+
+    private DateRange dateRangeForIssues(List<Issue> issues) {
+        if (issues.isEmpty()) {
+            LocalDate today = LocalDate.now();
+            return new DateRange(today, today.plusDays(1));
+        }
+        LocalDate start = issues.stream().map(this::resolveTaskStart).min(LocalDate::compareTo).orElse(LocalDate.now());
+        LocalDate end = issues.stream().map(this::resolveTaskEnd).max(LocalDate::compareTo).orElse(start);
+        return new DateRange(start, end);
+    }
+
+    private record DateRange(LocalDate start, LocalDate end) {}
 
     @Transactional
     public GanttDto recalculateGantt(ScarPrincipal principal, UUID projectId) {
@@ -697,7 +860,7 @@ public class WorkService {
         issue.setEndDate(end);
         issue.setDueDate(end);
         issue = issueRepository.save(issue);
-        return toGanttTask(issue, issue.getProject(), issueRepository.findByParentIssueId(issue.getId()).size() > 0);
+        return toGanttTask(issue, issue.getProject(), issueRepository.findByParentIssueId(issue.getId()).size() > 0, null);
     }
 
     @Transactional
@@ -1153,11 +1316,12 @@ public class WorkService {
         );
     }
 
-    private GanttDto.GanttTaskDto toGanttTask(Issue issue, Project project, boolean hasChildren) {
+    private GanttDto.GanttTaskDto toGanttTask(Issue issue, Project project, boolean hasChildren, String parentId) {
         LocalDate start = resolveTaskStart(issue);
         LocalDate end = resolveTaskEnd(issue);
         int progress = issue.getColumnId() == IssueColumn.done || issue.getColumnId() == IssueColumn.closed ? 100
             : issue.getColumnId() == IssueColumn.in_progress || issue.getColumnId() == IssueColumn.review ? 50 : 0;
+        String boardListId = issue.getBoardList() != null ? issue.getBoardList().getId().toString() : null;
         return new GanttDto.GanttTaskDto(
             issue.getId().toString(),
             project.getKeyCode() + "-" + issue.getIssueNumber(),
@@ -1167,13 +1331,16 @@ public class WorkService {
             issue.getColumnId().name(),
             issue.getAssignee() != null ? issue.getAssignee().getFullName() : null,
             progress,
-            issue.getParentIssue() != null ? issue.getParentIssue().getId().toString() : null,
+            parentId,
             issue.getEstimateMinutes(),
             issue.getPriority().name(),
             issue.getIssueType() != null ? issue.getIssueType().name() : IssueType.FEATURE.name(),
             project.getName(),
             issue.getObservations(),
-            hasChildren
+            hasChildren,
+            "TASK",
+            project.getId().toString(),
+            boardListId
         );
     }
 

@@ -109,8 +109,11 @@ public class WorkController {
     @GetMapping("/gantt")
     public GanttDto gantt(
         @AuthenticationPrincipal ScarPrincipal principal,
-        @RequestParam UUID projectId
+        @RequestParam(required = false) UUID projectId
     ) {
+        if (projectId == null) {
+            return workService.ganttAll(principal);
+        }
         return workService.gantt(principal, projectId);
     }
 
