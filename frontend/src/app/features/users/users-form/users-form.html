@@ -34,35 +34,32 @@
       </div>
 
       <div class="flex flex-col gap-2 md:col-span-2">
-        @if (!isCreateMode()) {
-          <span class="font-medium">Roles <span class="text-surface-500 text-sm font-normal">(máximo {{ maxRoles }}, vacío = personal)</span></span>
-          @if (isViewMode()) {
-            <div class="flex flex-wrap gap-2 min-h-10 items-center">
-              @for (role of form.getRawValue().roles ?? []; track role) {
-                <p-tag [value]="roleLabel(role)" severity="contrast" />
-              } @empty {
-                <span class="text-sm text-surface-500">Sin roles asignados</span>
-              }
-            </div>
-          } @else {
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 border border-surface-200 rounded-xl p-3">
-              @for (role of assignableRoleOptions(); track role.value) {
-                <label class="flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-surface-50" [for]="'role-' + role.value">
-                  <p-checkbox
-                    [inputId]="'role-' + role.value"
-                    [binary]="true"
-                    [ngModel]="isRoleSelected(role.value)"
-                    (ngModelChange)="toggleRole(role.value, $event)"
-                    [ngModelOptions]="{ standalone: true }"
-                    [disabled]="!isRoleSelected(role.value) && !canSelectMoreRoles()"
-                  />
-                  <span class="text-sm">{{ role.label }}</span>
-                </label>
-              }
-            </div>
-            @if (form.get('roles')?.touched && form.get('roles')?.hasError('maxRoles')) {
-              <span class="text-xs text-red-500">Solo puedes seleccionar un rol de gestión.</span>
+        <span class="font-medium">Tipo de usuario</span>
+        @if (isViewMode()) {
+          <div class="flex flex-wrap gap-2 min-h-10 items-center">
+            @for (role of form.getRawValue().roles ?? []; track role) {
+              <p-tag [value]="roleLabel(role)" severity="contrast" />
+            } @empty {
+              <p-tag value="Miembro" severity="secondary" />
             }
+          </div>
+        } @else {
+          <p-select
+            [options]="assignableRoleOptions()"
+            optionLabel="label"
+            optionValue="value"
+            [ngModel]="selectedRoleValue()"
+            (ngModelChange)="setSelectedRole($event)"
+            [ngModelOptions]="{ standalone: true }"
+            [disabled]="isAdminUser()"
+            class="w-full"
+            appendTo="body"
+          />
+          <span class="text-xs text-surface-500">
+            Solo puede existir un jefe y una secretaria. Los demás usuarios quedan como miembros.
+          </span>
+          @if (form.get('roles')?.touched && form.get('roles')?.hasError('maxRoles')) {
+            <span class="text-xs text-red-500">Solo puedes seleccionar un rol.</span>
           }
         }
       </div>

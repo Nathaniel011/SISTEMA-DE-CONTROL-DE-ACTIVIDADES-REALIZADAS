@@ -169,7 +169,15 @@ public class UserService {
                 ? userRepository.existsChief()
                 : userRepository.existsOtherChief(targetUserId);
             if (chiefTaken) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "Solo puede existir una jefa en el sistema");
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Solo puede existir un jefe en el sistema");
+            }
+        }
+        if (roles.contains(UserRole.SECRETARY)) {
+            boolean secretaryTaken = targetUserId == null
+                ? userRepository.existsSecretary()
+                : userRepository.existsOtherSecretary(targetUserId);
+            if (secretaryTaken) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Solo puede existir una secretaria en el sistema");
             }
         }
         if (permissionService.isAdmin(current)) {
@@ -178,7 +186,7 @@ public class UserService {
         if (permissionService.isChief(current)) {
             for (UserRole role : roles) {
                 if (role == UserRole.ADMIN || role == UserRole.CHIEF) {
-                    throw new ResponseStatusException(HttpStatus.FORBIDDEN, "La jefa solo puede asignar el rol de secretaria");
+                    throw new ResponseStatusException(HttpStatus.FORBIDDEN, "El jefe solo puede asignar el rol de secretaria");
                 }
             }
             return;

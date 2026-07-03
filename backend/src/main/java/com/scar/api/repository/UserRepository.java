@@ -37,6 +37,12 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     @Query("SELECT COUNT(u) > 0 FROM User u JOIN u.roles r WHERE r = com.scar.api.domain.enums.UserRole.CHIEF AND u.id <> :userId")
     boolean existsOtherChief(@Param("userId") UUID userId);
 
+    @Query("SELECT COUNT(u) > 0 FROM User u JOIN u.roles r WHERE r = com.scar.api.domain.enums.UserRole.SECRETARY")
+    boolean existsSecretary();
+
+    @Query("SELECT COUNT(u) > 0 FROM User u JOIN u.roles r WHERE r = com.scar.api.domain.enums.UserRole.SECRETARY AND u.id <> :userId")
+    boolean existsOtherSecretary(@Param("userId") UUID userId);
+
     @Query("SELECT COUNT(DISTINCT u) FROM User u JOIN u.roles r WHERE r = com.scar.api.domain.enums.UserRole.ADMIN")
     long countAdmins();
 }

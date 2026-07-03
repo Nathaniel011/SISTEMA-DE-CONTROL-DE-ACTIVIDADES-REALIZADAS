@@ -28,8 +28,8 @@ export interface UsersSortOption {
 export const MAX_USER_ROLES = 1;
 
 export const USER_ROLE_OPTIONS = [
-  {label: 'Administrador', value: 'ADMIN'},
-  {label: 'Jefa', value: 'CHIEF'},
+  {label: 'Miembro', value: ''},
+  {label: 'Jefe', value: 'CHIEF'},
   {label: 'Secretaria', value: 'SECRETARY'},
 ];
 

@@ -5,9 +5,9 @@ import {FormBuilder, FormsModule, ReactiveFormsModule, Validators} from '@angula
 import {ActivatedRoute, Router} from '@angular/router';
 import {Button} from 'primeng/button';
 import {Card} from 'primeng/card';
-import {Checkbox} from 'primeng/checkbox';
 import {InputText} from 'primeng/inputtext';
 import {Message} from 'primeng/message';
+import {Select} from 'primeng/select';
 import {Tag} from 'primeng/tag';
 import {ToggleSwitch} from 'primeng/toggleswitch';
 import {UsersService} from '../../../core/services/users.service';
@@ -22,7 +22,7 @@ import {MAX_USER_ROLES, USER_ROLE_OPTIONS, UserFormPayload, UserRecord} from '..
     NgTemplateOutlet,
     Card,
     InputText,
-    Checkbox,
+    Select,
     ToggleSwitch,
     Button,
     Message,
@@ -62,15 +62,19 @@ export class UsersForm implements OnInit, OnChanges {
 
   isViewMode = computed(() => this.mode() === 'view');
   isCreateMode = computed(() => this.mode() === 'create');
+  isAdminUser = computed(() => (this.currentUser()?.roles ?? []).includes('ADMIN'));
 
   assignableRoleOptions = computed(() => {
+    if (this.isAdminUser()) {
+      return [{label: 'Administrador', value: 'ADMIN'}];
+    }
     if (this.permissions.isAdmin()) {
       return USER_ROLE_OPTIONS;
     }
     if (this.permissions.isChief()) {
-      return USER_ROLE_OPTIONS.filter(option => option.value === 'SECRETARY');
+      return USER_ROLE_OPTIONS.filter(option => option.value === '' || option.value === 'SECRETARY');
     }
-    return [];
+    return USER_ROLE_OPTIONS.filter(option => option.value === '');
   });
 
   selectedRolesCount = computed(() => (this.form.getRawValue().roles ?? []).length);
@@ -143,6 +147,16 @@ export class UsersForm implements OnInit, OnChanges {
     return (this.form.getRawValue().roles ?? []).includes(role);
   }
 
+  selectedRoleValue(): string {
+    return (this.form.getRawValue().roles ?? [])[0] ?? '';
+  }
+
+  setSelectedRole(role: string): void {
+    this.form.patchValue({ roles: role ? [role] : [] });
+    this.form.get('roles')?.markAsTouched();
+    this.form.get('roles')?.updateValueAndValidity();
+  }
+
   canSelectMoreRoles(): boolean {
     return this.selectedRolesCount() < this.maxRoles;
   }
@@ -173,8 +187,8 @@ export class UsersForm implements OnInit, OnChanges {
       return;
     }
 
-    const roles = this.isCreateMode() ? [] : (this.form.getRawValue().roles ?? []);
-    if (!this.isCreateMode() && roles.length > this.maxRoles) {
+    const roles = this.form.getRawValue().roles ?? [];
+    if (roles.length > this.maxRoles) {
       this.form.get('roles')?.setErrors({ maxRoles: true });
       return;
     }
