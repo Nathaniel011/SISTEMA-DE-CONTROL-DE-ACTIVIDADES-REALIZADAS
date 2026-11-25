@@ -172,8 +172,8 @@
               @for (day of projectTimelineDays(); track day.iso) {
                 <div
                   class="px-2 py-2 border-r border-b border-surface-200 text-center"
-                  [class.bg-primary-600]="(row.minutesByDate[day.iso] ?? 0) > 0"
-                  [class.text-white]="(row.minutesByDate[day.iso] ?? 0) > 0"
+                  [class.bg-highlight]="(row.minutesByDate[day.iso] ?? 0) > 0"
+                  [class.font-bold]="(row.minutesByDate[day.iso] ?? 0) > 0"
                   [class.bg-primary-50]="day.isToday && !(row.minutesByDate[day.iso] ?? 0)"
                 >
                   {{ formatMinutes(row.minutesByDate[day.iso] ?? 0) }}
@@ -226,7 +226,8 @@
               @for (row of day.entries.slice(0, 4); track row.entry.id) {
                 <div class="rounded-md border border-surface-200 bg-surface-50 px-2 py-1 text-xs">
                   <div class="flex items-center justify-between gap-2">
-                    <span class="font-mono text-primary-700 truncate">{{ row.issueKey }}</span>
+                    <a class="font-semibold text-primary-800 truncate hover:underline" routerLink="/work/issues"
+                      [queryParams]="{issue: row.entry.issueId, board: row.entry.projectId, view: 'list'}">{{ row.issueKey }}</a>
                     <span class="font-medium text-surface-700">{{ formatMinutes(row.entry.minutes) }}</span>
                   </div>
                   <div class="truncate text-surface-600">{{ row.entry.note || row.entry.issueTitle }}</div>
@@ -288,8 +289,8 @@
         <button
           type="button"
           class="px-3 py-1.5"
-          [class.bg-primary-600]="addTimeMode() === 'dates'"
-          [class.text-white]="addTimeMode() === 'dates'"
+          [class.bg-highlight]="addTimeMode() === 'dates'"
+          [class.font-bold]="addTimeMode() === 'dates'"
           (click)="setAddTimeMode('dates')"
         >
           Fechas individuales
@@ -297,8 +298,8 @@
         <button
           type="button"
           class="px-3 py-1.5 border-l border-surface-300"
-          [class.bg-primary-600]="addTimeMode() === 'range'"
-          [class.text-white]="addTimeMode() === 'range'"
+          [class.bg-highlight]="addTimeMode() === 'range'"
+          [class.font-bold]="addTimeMode() === 'range'"
           (click)="setAddTimeMode('range')"
         >
           Rangos de fechas

@@ -1,0 +1,56 @@
+<main class="min-h-screen bg-surface-50 px-4 py-8 sm:py-16">
+  <article class="mx-auto grid max-w-2xl gap-5 rounded-2xl border border-surface-200 bg-surface-0 p-5 sm:p-8">
+    <div class="flex items-center gap-3 text-primary-800">
+      <i class="pi pi-inbox" aria-hidden="true"></i><span class="font-semibold">SCAR · Mesa de atención</span>
+    </div>
+    <h1 class="m-0 text-2xl font-semibold">{{ trackingPage ? 'Seguimiento de solicitud' : 'Registrar una solicitud' }}</h1>
+
+    @if (error()) {
+      <p role="alert" class="m-0 rounded-lg bg-red-50 p-3 text-red-800">{{ error() }}</p>
+      @if (trackingPage || enabled() === null) {
+        <div><p-button label="Reintentar" icon="pi pi-refresh" severity="secondary" [disabled]="loading()" (onClick)="load()" /></div>
+      }
+    }
+
+    @if (trackingPage) {
+      @if (tracking(); as request) {
+        <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-primary-50 p-4 text-primary-900">
+          <div><strong>{{ request.reference }}</strong><div class="text-sm">{{ date(request.createdAt) }}</div></div>
+          <span class="font-semibold" role="status">{{ status() }}</span>
+        </div>
+        <section aria-labelledby="public-replies" class="grid gap-3">
+          <h2 id="public-replies" class="m-0 text-lg font-semibold">Respuestas del equipo</h2>
+          @for (reply of request.replies; track $index) {
+            <article class="rounded-lg border border-surface-200 p-3">
+              <time class="text-sm text-surface-600" [attr.datetime]="reply.createdAt">{{ date(reply.createdAt) }}</time>
+              <p class="mb-0 mt-1 whitespace-pre-wrap break-words">{{ reply.text }}</p>
+            </article>
+          } @empty { <p class="m-0 text-surface-600">Todavía no hay respuestas.</p> }
+        </section>
+      } @else if (loading()) { <p role="status">Consultando tu solicitud…</p> }
+    } @else if (receipt(); as result) {
+      <div role="status" class="grid gap-2 rounded-lg bg-primary-50 p-4 text-primary-900">
+        <strong>Solicitud registrada · {{ result.reference }}</strong>
+        <p class="m-0">Guarda el enlace de seguimiento. Podrás ver el estado y las respuestas del equipo.</p>
+      </div>
+      <a class="w-fit font-semibold text-primary-700 underline" routerLink="/seguimiento" [fragment]="result.trackingToken">Abrir seguimiento</a>
+    } @else if (enabled()) {
+      <form class="grid gap-3" (ngSubmit)="submit()">
+        <label for="public-name" class="font-medium">Nombre</label>
+        <input id="public-name" pInputText name="name" maxlength="160" required autocomplete="name"
+          [ngModel]="name()" (ngModelChange)="name.set($event)" [disabled]="loading()" />
+        <label for="public-email" class="font-medium">Correo electrónico</label>
+        <input id="public-email" pInputText type="email" name="email" maxlength="254" required autocomplete="email"
+          [ngModel]="email()" (ngModelChange)="email.set($event)" [disabled]="loading()" />
+        <label for="public-title" class="font-medium">Asunto</label>
+        <app-work-writing-field inputId="public-title" label="Asunto" [(value)]="title" [required]="true" [disabled]="loading()" />
+        <label for="public-description" class="font-medium">Descripción</label>
+        <app-work-writing-field inputId="public-description" label="Descripción" [(value)]="description"
+          [rows]="5" [maxLength]="10000" [required]="true" [disabled]="loading()" />
+        <div><p-button type="submit" label="Enviar solicitud" icon="pi pi-send" [loading]="loading()" [disabled]="!ready()" /></div>
+      </form>
+    } @else if (enabled() === false) {
+      <p class="m-0 text-surface-700">El formulario público está deshabilitado en esta instancia.</p>
+    } @else if (loading()) { <p role="status">Cargando formulario…</p> }
+  </article>
+</main>

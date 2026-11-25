@@ -1,6 +1,7 @@
-import {Component, computed, inject, signal, viewChild} from '@angular/core';
+import {Component, computed, effect, inject, signal, untracked} from '@angular/core';
+import {toSignal} from '@angular/core/rxjs-interop';
 
-import {Router} from '@angular/router';
+import {ActivatedRoute, Router, RouterLink} from '@angular/router';
 
 import {Button} from 'primeng/button';
 
@@ -11,8 +12,6 @@ import {Dialog} from 'primeng/dialog';
 import {InputText} from 'primeng/inputtext';
 
 import {Textarea} from 'primeng/textarea';
-
-import {Tag} from 'primeng/tag';
 
 import {FormsModule} from '@angular/forms';
 
@@ -30,7 +29,7 @@ import {PermissionsService} from '../../../core/services/permissions.service';
 
 import {UsersService} from '../../../core/services/users.service';
 
-import {WorkBoardSwitcher} from '../work-board-switcher/work-board-switcher';
+import {WorkPageHeader} from '../work-page-header/work-page-header';
 
 import {WorkBoard} from '../work.models';
 import {boardDisplayName} from '../work.utils';
@@ -55,7 +54,6 @@ import {boardDisplayName} from '../work.utils';
 
     Textarea,
 
-    Tag,
 
     FormsModule,
 
@@ -63,7 +61,8 @@ import {boardDisplayName} from '../work.utils';
 
     InputIcon,
 
-    WorkBoardSwitcher,
+    RouterLink,
+    WorkPageHeader,
 
   ],
 
@@ -72,6 +71,9 @@ import {boardDisplayName} from '../work.utils';
 })
 
 export class WorkAgile {
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
+  private readonly query = toSignal(this.route.queryParamMap, {initialValue: this.route.snapshot.queryParamMap});
 
   workService = inject(WorkService);
 
@@ -81,15 +83,17 @@ export class WorkAgile {
 
   permissions = inject(PermissionsService);
 
-  private router = inject(Router);
-
   boardDisplayName = boardDisplayName;
 
-  boardSwitcher = viewChild(WorkBoardSwitcher);
+  retry(): void {
+    void this.workService.loadFromApi().catch(() => undefined);
+  }
 
 
 
   createDialogOpen = signal(false);
+  creatingBoard = signal(false);
+  createBoardError = signal('');
 
   membersDialogOpen = signal(false);
 
@@ -109,37 +113,29 @@ export class WorkAgile {
   deleteDialogOpen = signal(false);
   boardToDelete = signal<WorkBoard | null>(null);
   deletingBoard = signal(false);
+  memberLoadError = signal(false);
+  actionError = signal('');
+
+  constructor() {
+    effect(() => {
+      const id = this.query().get('equipo');
+      if (!id || !this.workService.canManageBoardMembers() || !this.workService.getBoard(id)) return;
+      untracked(() => {
+        this.openMembersDialog(id);
+        void this.router.navigate([], {relativeTo: this.route, queryParams: {equipo: null}, queryParamsHandling: 'merge', replaceUrl: true});
+      });
+    });
+  }
 
 
 
-  rootBoards = computed(() => {
-
+  projects = computed(() => {
     const query = this.search().trim().toLowerCase();
-
     const general = this.workService.generalBoard();
-
-    let boards = this.workService.boards().filter(b => !b.parentBoardId);
-
-    if (general) {
-
-      boards = [general, ...boards.filter(b => b.id !== general.id)];
-
-    }
-
-    if (!query) return boards;
-
-    return boards.filter(
-
-      b =>
-
-        b.name.toLowerCase().includes(query) ||
-
-        b.key.toLowerCase().includes(query) ||
-
-        (b.description ?? '').toLowerCase().includes(query)
-
+    const projects = general ? [...this.workService.standardBoards(), general] : this.workService.standardBoards();
+    return projects.filter(project =>
+      [boardDisplayName(project), project.key, project.description ?? ''].join(' ').toLowerCase().includes(query),
     );
-
   });
 
 
@@ -170,14 +166,6 @@ export class WorkAgile {
 
 
 
-  childBoardsFor(boardId: string): WorkBoard[] {
-
-    return this.workService.boards().filter(board => board.parentBoardId === boardId);
-
-  }
-
-
-
   getBoardMembers(boardId: string) {
 
     const board = this.workService.boards().find(b => b.id === boardId);
@@ -190,68 +178,57 @@ export class WorkAgile {
 
 
 
-  openSwitcher(): void {
-
-    this.boardSwitcher()?.open();
-
-  }
-
-
-
-  openBoard(board: WorkBoard): void {
-
-    this.workService.recordBoardVisit(board.id);
-
-    this.router.navigate(['/work/agile', board.id]);
-
-  }
-
-
-
   openCreate(): void {
 
     this.boardName.set('');
 
     this.boardDescription.set('');
 
+    this.createBoardError.set('');
     this.createDialogOpen.set(true);
 
   }
 
 
 
-  saveBoard(): void {
+  async saveBoard(): Promise<void> {
 
     const name = this.boardName().trim();
 
-    if (!name) return;
-
-    this.workService.createBoard({ name, description: this.boardDescription().trim() });
-
-    this.createDialogOpen.set(false);
+    if (!name || this.creatingBoard()) return;
+    this.creatingBoard.set(true);
+    this.createBoardError.set('');
+    try {
+      await this.workService.createBoard({name, description: this.boardDescription().trim()});
+      this.createDialogOpen.set(false);
+    } catch {
+      this.createBoardError.set('No se pudo crear el proyecto. Puedes volver a intentarlo con los mismos datos.');
+    } finally {
+      this.creatingBoard.set(false);
+    }
 
   }
 
 
 
-  async openMembersDialog(boardId: string, event: Event): Promise<void> {
-
-    event.stopPropagation();
-
+  openMembersDialog(boardId: string): void {
     const board = this.workService.boards().find(b => b.id === boardId);
-
     if (!board) return;
-
-    await this.usersService.loadUsers();
-
     this.selectedBoardId.set(boardId);
-
     this.selectedMembers.set([...board.memberIds]);
-
     this.memberSearch.set('');
-
+    this.actionError.set('');
     this.membersDialogOpen.set(true);
+    void this.loadMembers();
+  }
 
+  async loadMembers(): Promise<void> {
+    this.memberLoadError.set(false);
+    try {
+      await this.usersService.loadUsers();
+    } catch {
+      this.memberLoadError.set(true);
+    }
   }
 
 
@@ -296,7 +273,7 @@ export class WorkAgile {
 
   async saveMembers(): Promise<void> {
     const boardId = this.selectedBoardId();
-    if (!boardId) return;
+    if (!boardId || this.savingMembers() || this.memberLoadError() || this.usersService.loading()) return;
 
     const currentBoard = this.workService.boards().find(b => b.id === boardId);
     if (!currentBoard) return;
@@ -321,17 +298,20 @@ export class WorkAgile {
     }
 
     this.savingMembers.set(true);
+    this.actionError.set('');
     try {
-      await firstValueFrom(this.workApi.updateBoardMembers(boardId, actions));
-      this.workService.patchBoardMembers(boardId, [...this.selectedMembers()]);
+      const updated = await firstValueFrom(this.workApi.updateBoardMembers(boardId, actions));
+      this.workService.patchBoardMembers(boardId, updated.memberIds);
       this.membersDialogOpen.set(false);
+    } catch {
+      this.actionError.set('No se pudieron guardar los miembros del proyecto.');
     } finally {
       this.savingMembers.set(false);
     }
   }
 
-  openDeleteBoardDialog(board: WorkBoard, event: Event): void {
-    event.stopPropagation();
+  openDeleteBoardDialog(board: WorkBoard): void {
+    this.actionError.set('');
     this.boardToDelete.set(board);
     this.deleteDialogOpen.set(true);
   }
@@ -343,11 +323,14 @@ export class WorkAgile {
 
   async executeDeleteBoard(): Promise<void> {
     const board = this.boardToDelete();
-    if (!board) return;
+    if (!board || this.deletingBoard()) return;
     this.deletingBoard.set(true);
+    this.actionError.set('');
     try {
       await this.workService.deleteBoard(board.id);
       this.cancelDeleteBoard();
+    } catch {
+      this.actionError.set('No se pudo eliminar el proyecto.');
     } finally {
       this.deletingBoard.set(false);
     }

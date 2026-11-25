@@ -4,18 +4,25 @@ spring:
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:scar}
     username: ${DB_USER:scar}
-    password: ${DB_PASSWORD:60465524}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX:10}
+      minimum-idle: ${DB_POOL_MIN:2}
+      connection-timeout: ${DB_POOL_WAIT_MS:5000}
   jpa:
     hibernate:
       ddl-auto: validate
     open-in-view: false
     properties:
       hibernate:
+        default_batch_fetch_size: 32
         jdbc:
           time_zone: UTC
   flyway:
     enabled: true
     locations: classpath:db/migration
+    postgresql:
+      transactional-lock: false
   servlet:
     multipart:
       max-file-size: 10MB
@@ -26,11 +33,37 @@ server:
   servlet:
     context-path: /
 
+management:
+  health:
+    redis:
+      enabled: ${SCAR_REDIS_HEALTH_ENABLED:false}
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
 scar:
+  telemetry:
+    rum-enabled: ${SCAR_RUM_ENABLED:true}
+  jobs:
+    worker-enabled: ${SCAR_JOB_WORKER_ENABLED:true}
+    poll-millis: ${SCAR_JOB_POLL_MS:1000}
+  bootstrap:
+    admin-password: ${SCAR_BOOTSTRAP_ADMIN_PASSWORD:}
+    admin-email: ${SCAR_BOOTSTRAP_ADMIN_EMAIL:administrador@scar.local}
+  helpdesk:
+    public-intake-enabled: ${SCAR_HELPDESK_PUBLIC_INTAKE_ENABLED:false}
+    zone: ${SCAR_HELPDESK_ZONE:America/La_Paz}
+    opening: ${SCAR_HELPDESK_OPENING:09:00}
+    closing: ${SCAR_HELPDESK_CLOSING:17:00}
   dev:
-    auto-fix-admin: ${SCAR_AUTO_FIX_ADMIN:true}
+    seed-demo: ${SCAR_SEED_DEMO:false}
+    auto-fix-admin: ${SCAR_AUTO_FIX_ADMIN:false}
   db:
-    auto-provision: true
+    auto-provision: ${DB_AUTO_PROVISION:true}
   upload:
     dir: ${UPLOAD_DIR:./uploads}
   webhooks:
@@ -41,11 +74,13 @@ scar:
       backend: ${SCAR_LOGIN_RATE_LIMIT_BACKEND:memory}
       redis-key-prefix: ${SCAR_LOGIN_RATE_LIMIT_REDIS_PREFIX:scar:login-rate}
   jwt:
-    secret: ${JWT_SECRET:scar-dev-secret-change-in-production-min-256-bits-long-key!!}
+    secret: ${JWT_SECRET:}
     expiration-ms: ${JWT_EXPIRATION_MS:86400000}
   cors:
-    allowed-origins: ${CORS_ORIGINS:http://localhost:4200}
+    allowed-origins: ${CORS_ORIGINS:http://localhost:4200,https://*.ngrok-free.dev,https://*.ngrok-free.app,https://*.ngrok.io}
 
 logging:
+  pattern:
+    level: "%5p trace_id=%X{trace_id:-} span_id=%X{span_id:-}"
   level:
     com.scar: INFO

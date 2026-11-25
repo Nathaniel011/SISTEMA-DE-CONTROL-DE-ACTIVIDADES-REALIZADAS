@@ -1,0 +1,48 @@
+{
+	admin off
+}
+
+{$SCAR_SITE::8080} {
+	bind {$SCAR_BIND:0.0.0.0}
+	@hidden path /actuator/* /internal/* *.br *.gz
+	respond @hidden 404
+
+	@vitals path /api/telemetry/vitals
+	request_body @vitals {
+		max_size 1KB
+	}
+
+	@api path /api/*
+	handle @api {
+		header Cache-Control "private, no-store"
+		reverse_proxy {$SCAR_UPSTREAMS:api-a:8080 api-b:8080} {
+			lb_policy round_robin
+			health_uri /actuator/health
+			health_interval 10s
+			health_timeout 3s
+			fail_duration 10s
+		}
+	}
+
+	root * {$SCAR_STATIC_ROOT:/srv}
+	@immutable path_regexp hash ^/(?:media/)?[^/]+-[A-Za-z0-9]{8}\.(?:js|mjs|css|woff2?|svg|png|jpg|webp)$
+	@assets path *.js *.mjs *.css *.woff *.woff2 *.ttf *.svg *.png *.ico *.jpg *.webp
+	handle @assets {
+		route {
+			header Access-Control-Allow-Origin "*"
+			header Cache-Control "public, max-age=3600"
+			header @immutable Cache-Control "public, max-age=31536000, immutable"
+			file_server {
+				precompressed br gzip
+			}
+		}
+	}
+
+	handle {
+		header Cache-Control "no-cache"
+		try_files {path}/index.html {path} /index.csr.html /index.html
+		file_server {
+			precompressed br gzip
+		}
+	}
+}

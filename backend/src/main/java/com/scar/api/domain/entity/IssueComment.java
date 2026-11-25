@@ -23,6 +23,9 @@ public class IssueComment {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String text;
 
+    @Column(name = "public_reply", nullable = false)
+    private boolean publicReply;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
@@ -33,5 +36,7 @@ public class IssueComment {
     public void setAuthor(User author) { this.author = author; }
     public String getText() { return text; }
     public void setText(String text) { this.text = text; }
+    public boolean isPublicReply() { return publicReply; }
+    public void setPublicReply(boolean publicReply) { this.publicReply = publicReply; }
     public Instant getCreatedAt() { return createdAt; }
 }

@@ -1,7 +1,7 @@
 export const environment = {
   production: false,
   environmentName: 'development',
-  apiUrl: 'http://localhost:8080',
+  apiUrl: '',
   useApi: true,
   pagination: {
     defaultPageSize: 10,

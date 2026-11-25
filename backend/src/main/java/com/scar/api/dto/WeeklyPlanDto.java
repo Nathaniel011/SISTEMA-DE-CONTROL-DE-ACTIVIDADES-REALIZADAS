@@ -23,6 +23,7 @@ public record WeeklyPlanDto(
         String endDay,
         String priority,
         String issueType,
-        String observations
+        String observations,
+        String issueId
     ) {}
 }

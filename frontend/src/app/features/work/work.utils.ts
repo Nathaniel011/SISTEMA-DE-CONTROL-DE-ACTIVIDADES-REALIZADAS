@@ -1,7 +1,7 @@
 import {environment} from '../../../environments/environment';
 import {WORK_PRIORITIES, WorkBoard, WorkPriority, WorkCard} from './work.models';
 
-export const GENERAL_BOARD_LABEL = 'Tablero general';
+export const GENERAL_BOARD_LABEL = 'Recepción de solicitudes';
 export const WORK_DRAFT_CARD_TITLE = 'Nueva tarjeta';
 
 export function isGeneralBoard(board: Pick<WorkBoard, 'type' | 'key'>): boolean {

@@ -1,0 +1,63 @@
+.layout-container .layout-content-work { padding-bottom: calc(5.2rem + env(safe-area-inset-bottom)); }
+.account-avatar {
+  --p-avatar-background: var(--p-highlight-background);
+  --p-avatar-color: var(--p-highlight-color);
+}
+
+.work-dock {
+  position: fixed;
+  z-index: 35;
+  inset-inline: .75rem;
+  inset-block-end: calc(.65rem + env(safe-area-inset-bottom));
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: .28rem;
+  width: max-content;
+  max-width: calc(100% - 1.5rem);
+  margin-inline: auto;
+  padding: .35rem;
+  border: 1px solid var(--p-content-border-color);
+  border-radius: 1rem;
+  background: var(--p-content-background);
+  box-shadow: 0 6px 24px rgb(15 23 42 / 14%);
+}
+
+.work-dock :is(a, button) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .48rem;
+  min-height: 3.15rem;
+  padding: .4rem .76rem;
+  border-radius: .65rem;
+  color: var(--p-text-color);
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.work-dock :is(a, button):hover { background: var(--p-content-hover-background); }
+.work-dock a[aria-current='page'] { color: var(--p-highlight-color); background: var(--p-highlight-background); }
+.work-dock :is(a, button):focus-visible { outline: 2px solid var(--p-focus-ring-color); outline-offset: 2px; }
+.work-dock button { border-inline-start: 1px solid var(--p-content-border-color); }
+.work-dock-short { display: none; }
+
+@media (min-width: 48rem) {
+  .work-dock { inset-inline-start: 14.75rem; max-width: calc(100% - 15.5rem); }
+}
+
+@media (max-width: 38rem) {
+  .work-dock :is(a, button) { flex: 1 1 0; flex-direction: column; min-width: 3.9rem; gap: .25rem; padding-inline: .48rem; font-size: .78rem; }
+  .work-dock i { font-size: 1.04rem; }
+  .work-dock-label { display: none; }
+  .work-dock-short { display: inline; }
+}
+.sidebar-close { position: absolute; inset-inline-start: 1rem; }
+.nav-desktop-trigger { display: none; }
+@media (min-width: 48rem) {
+  .nav-mobile-trigger { display: none; }
+  .nav-desktop-trigger { display: inline-flex; margin-inline-end: .5rem; }
+  .layout-container.nav-collapsed { margin-inline-start: 0; }
+  .layout-container.nav-collapsed .work-dock { inset-inline-start: .75rem; max-width: calc(100% - 1.5rem); }
+}

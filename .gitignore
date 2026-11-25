@@ -50,3 +50,16 @@ dev/local.env
 
 # Legacy / local artifacts
 argos-api/
+
+# Private files and local diagnostics
+/backend/uploads/
+*.dump
+*.log
+.env
+.env.*
+!/dev/local.env.example
+/V2.md
+/docs/v2-diseno/
+/0.26.0
+/.github/modernize/
+/backend/.github/modernize/

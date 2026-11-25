@@ -12,6 +12,7 @@ import jakarta.validation.constraints.NotNull;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
+import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -23,10 +24,12 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -38,12 +41,21 @@ public class FileUploadController {
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
         "jpg", "jpeg", "png", "gif", "webp", "bmp", "pdf"
     );
+    private static final Map<String, Set<String>> ALLOWED_MIME_BY_EXTENSION = Map.of(
+        "jpg", Set.of("image/jpeg"),
+        "jpeg", Set.of("image/jpeg"),
+        "png", Set.of("image/png"),
+        "gif", Set.of("image/gif"),
+        "webp", Set.of("image/webp"),
+        "bmp", Set.of("image/bmp"),
+        "pdf", Set.of("application/pdf")
+    );
 
     private final AttachmentRepository attachmentRepository;
     private final IssueRepository issueRepository;
     private final UserRepository userRepository;
     private final PermissionService permissionService;
-    private final String uploadDir;
+    private final Path uploadRoot;
 
     public FileUploadController(
         AttachmentRepository attachmentRepository,
@@ -56,9 +68,9 @@ public class FileUploadController {
         this.issueRepository = issueRepository;
         this.userRepository = userRepository;
         this.permissionService = permissionService;
-        this.uploadDir = uploadDir;
+        this.uploadRoot = Paths.get(uploadDir).toAbsolutePath().normalize();
         try {
-            Files.createDirectories(Paths.get(uploadDir));
+            Files.createDirectories(this.uploadRoot);
         } catch (IOException e) {
             throw new RuntimeException("Could not create upload directory", e);
         }
@@ -73,22 +85,22 @@ public class FileUploadController {
         User currentUser = loadUser(principal);
         Attachment attachment = attachmentRepository.findByFileUrlWithIssue("/api/files/" + filename)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Archivo no encontrado"));
-        permissionService.requireAccessProject(currentUser, attachment.getIssue().getProject());
+        permissionService.requireReadIssue(currentUser, attachment.getIssue());
 
-        Path filePath = Paths.get(uploadDir, filename);
+        Path filePath = resolveSafeFilePath(filename);
         if (!Files.exists(filePath)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Archivo no encontrado");
         }
         Resource resource = new UrlResource(filePath.toUri());
         boolean forceDownload = isSvgAttachment(attachment);
-        String disposition = forceDownload
-            ? "attachment; filename=\"" + attachment.getFileName() + "\""
-            : "inline; filename=\"" + attachment.getFileName() + "\"";
+        ContentDisposition disposition = ContentDisposition.builder(forceDownload ? "attachment" : "inline")
+            .filename(attachment.getFileName(), StandardCharsets.UTF_8)
+            .build();
         MediaType mediaType = forceDownload
             ? MediaType.APPLICATION_OCTET_STREAM
             : MediaType.parseMediaType(attachment.getMimeType());
         return ResponseEntity.ok()
-            .header(HttpHeaders.CONTENT_DISPOSITION, disposition)
+            .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
             .contentType(mediaType)
             .body(resource);
     }
@@ -103,7 +115,7 @@ public class FileUploadController {
         User currentUser = loadUser(principal);
         Issue issue = issueRepository.findByIdWithAccessDetails(issueId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Incidencia no encontrada"));
-        permissionService.requireAccessProject(currentUser, issue.getProject());
+        permissionService.requireReadIssue(currentUser, issue);
         permissionService.requireUpdateIssue(currentUser, issue, null);
 
         if (file.isEmpty()) {
@@ -123,7 +135,7 @@ public class FileUploadController {
                 ? originalFilename.substring(originalFilename.lastIndexOf('.'))
                 : "";
             String uniqueFilename = UUID.randomUUID() + extension;
-            Path filePath = Paths.get(uploadDir, uniqueFilename);
+            Path filePath = resolveSafeFilePath(uniqueFilename);
             Files.copy(file.getInputStream(), filePath);
 
             Attachment attachment = new Attachment();
@@ -144,7 +156,7 @@ public class FileUploadController {
                 attachment.getCreatedAt().toString()
             ));
         } catch (IOException e) {
-            return ResponseEntity.internalServerError().body("Failed to upload file: " + e.getMessage());
+            return ResponseEntity.internalServerError().body("No se pudo guardar el archivo");
         }
     }
 
@@ -158,17 +170,28 @@ public class FileUploadController {
         Attachment attachment = attachmentRepository.findByIdWithIssue(id)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Adjunto no encontrado"));
         Issue issue = attachment.getIssue();
-        permissionService.requireAccessProject(currentUser, issue.getProject());
+        permissionService.requireReadIssue(currentUser, issue);
         permissionService.requireUpdateIssue(currentUser, issue, null);
 
         try {
             String filename = attachment.getFileUrl().replace("/api/files/", "");
-            Files.deleteIfExists(Paths.get(uploadDir, filename));
+            Files.deleteIfExists(resolveSafeFilePath(filename));
             attachmentRepository.delete(attachment);
             return ResponseEntity.noContent().build();
         } catch (IOException e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "No se pudo eliminar el archivo");
         }
+    }
+
+    private Path resolveSafeFilePath(String filename) {
+        if (filename == null || filename.isBlank() || filename.contains("..") || filename.contains("/") || filename.contains("\\")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nombre de archivo inválido");
+        }
+        Path resolved = uploadRoot.resolve(filename).normalize();
+        if (!resolved.startsWith(uploadRoot)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nombre de archivo inválido");
+        }
+        return resolved;
     }
 
     private User loadUser(ScarPrincipal principal) {
@@ -178,17 +201,15 @@ public class FileUploadController {
 
     private boolean isAllowedFile(String filename, String mimeType) {
         String extension = fileExtension(filename);
-        String normalizedMime = mimeType == null ? "" : mimeType.toLowerCase(Locale.ROOT);
+        if (extension == null || !ALLOWED_EXTENSIONS.contains(extension)) {
+            return false;
+        }
+        String normalizedMime = mimeType == null ? "" : mimeType.toLowerCase(Locale.ROOT).split(";")[0].trim();
         if ("svg".equals(extension) || normalizedMime.contains("svg")) {
             return false;
         }
-        if (extension != null && ALLOWED_EXTENSIONS.contains(extension)) {
-            return true;
-        }
-        if (normalizedMime.isBlank()) {
-            return false;
-        }
-        return normalizedMime.startsWith("image/") || "application/pdf".equalsIgnoreCase(mimeType);
+        Set<String> allowedMimes = ALLOWED_MIME_BY_EXTENSION.get(extension);
+        return allowedMimes != null && allowedMimes.contains(normalizedMime);
     }
 
     private String fileExtension(String filename) {

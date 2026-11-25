@@ -4,11 +4,13 @@ import {environment} from '../../../environments/environment';
 import {PermissionsService} from './permissions.service';
 import {AuthService} from './auth.service';
 import {UpdateIssuePayload, WorkApiService, DashboardResponse} from './work-api.service';
+import {IssueFieldValues, ProjectTransition} from './project-configuration-api.service';
 import {
   createDefaultWorkState,
   newBoardId,
   newCardId,
   WORK_STATUS_LABELS,
+  WORK_COLUMNS,
   WorkBoard,
   WorkBoardList,
   WorkCard,
@@ -23,6 +25,7 @@ import {WORK_DRAFT_CARD_TITLE} from '../../features/work/work.utils';
 
 const STORAGE_KEY = 'scar-work-v2';
 const RECENT_BOARDS_KEY = 'scar-recent-boards';
+const FAVORITE_BOARDS_KEY = 'scar-favorite-boards';
 const MAX_RECENT_BOARDS = 4;
 
 export type WorkIssueFilter = 'all' | 'assigned' | 'commented' | 'mentioned' | 'unassigned';
@@ -37,10 +40,17 @@ export class WorkService {
   );
   private loading = signal(false);
   private loadError = signal<string | null>(null);
+  private cacheToken: string | null = null;
   private bootstrapPromise: Promise<void> | null = null;
   private boardCardsPromises = new Map<string, Promise<void>>();
+  private loadedBoardIds = new Set<string>();
   private allCardsPromise: Promise<void> | null = null;
   private allCardsLoaded = signal(false);
+  private movableIssues = signal(new Set<string>());
+  private issueListColumns = signal<Record<string, WorkColumnId>>({});
+  private projectTransitions = signal<Record<string, ProjectTransition[]>>({});
+  private boardPreferencesRevision = signal(0);
+  private dashboardRequest = 0;
 
   dashboardMetrics = signal<DashboardResponse | null>(null);
   dashboardLoading = signal(false);
@@ -84,25 +94,56 @@ export class WorkService {
   constructor() {
     if (environment.useApi) {
       effect(() => {
-        if (this.authService.isAuthenticated()) {
-          untracked(() => void this.loadFromApi());
-        }
+        const token = this.authService.getToken();
+        const authenticated = this.authService.isAuthenticated();
+        untracked(() => {
+          this.resetWorkspaceCache(token);
+          if (authenticated) void this.loadFromApi().catch(() => undefined);
+        });
       });
     }
   }
 
+  private resetWorkspaceCache(token: string | null): void {
+    if (this.cacheToken === token) return;
+    this.cacheToken = token;
+    this.state.set(this.emptyState());
+    this.bootstrapPromise = null;
+    this.allCardsPromise = null;
+    this.boardCardsPromises.clear();
+    this.loadedBoardIds.clear();
+    this.allCardsLoaded.set(false);
+    this.loading.set(false);
+    this.loadError.set(null);
+    this.movableIssues.set(new Set());
+    this.issueListColumns.set({});
+    this.projectTransitions.set({});
+    this.selectedBoardId.set('all');
+    this.activeSavedSearch.set('all');
+    this.dashboardMetrics.set(null);
+    this.dashboardLoading.set(false);
+    this.dashboardRequest++;
+  }
+
   async loadFromApi(): Promise<void> {
-    if (!environment.useApi) {
+    const session = this.authService.getToken();
+    if (!environment.useApi || !session) {
       return;
     }
+    this.resetWorkspaceCache(session);
     if (this.bootstrapPromise) {
       return this.bootstrapPromise;
+    }
+    if (this.allCardsPromise) {
+      return this.allCardsPromise;
     }
     this.loading.set(true);
     this.loadError.set(null);
     this.bootstrapPromise = (async () => {
       try {
+        void this.loadUserPreferences();
         const data = await firstValueFrom(this.workApi.bootstrap({ cards: 'none' }));
+        if (this.authService.getToken() !== session) return;
         this.state.set({
           boards: data.boards.map(b => ({ ...b, type: b.type ?? 'standard' })),
           boardLists: (data.boardLists ?? []).map(list => this.mapBoardList(list)),
@@ -111,62 +152,167 @@ export class WorkService {
           activeTimer: data.activeTimer,
         });
         this.allCardsLoaded.set(false);
-        await this.loadUserPreferences();
+        this.loadedBoardIds.clear();
+        this.movableIssues.set(new Set());
+        this.issueListColumns.set(data.boardListColumns ?? {});
+        this.projectTransitions.set(data.projectTransitions ?? {});
       } catch {
+        if (this.authService.getToken() !== session) return;
         this.loadError.set('No se pudo cargar los datos del tablero');
         throw new Error('bootstrap failed');
       } finally {
-        this.loading.set(false);
-        this.bootstrapPromise = null;
+        if (this.authService.getToken() === session) {
+          this.loading.set(false);
+          this.bootstrapPromise = null;
+        }
       }
     })();
     return this.bootstrapPromise;
   }
 
   async ensureBoardCards(boardId: string): Promise<void> {
-    if (!environment.useApi || !boardId) {
+    const session = this.authService.getToken();
+    if (!environment.useApi || !session || !boardId) {
       return;
     }
+    this.resetWorkspaceCache(session);
     const existing = this.boardCardsPromises.get(boardId);
     if (existing) {
       return existing;
     }
-    const hasCards = this.cards().some(c => c.boardId === boardId);
-    if (hasCards) {
+    if (this.allCardsLoaded() || this.loadedBoardIds.has(boardId)) {
       return;
     }
     const promise = (async () => {
       try {
-        const cards = await firstValueFrom(this.workApi.getProjectCards(boardId));
+        const {cards, movableIssueIds} = await firstValueFrom(this.workApi.getProjectCards(boardId));
+        if (this.authService.getToken() !== session) return;
         this.mergeCards(cards);
+        this.movableIssues.update(ids => {
+          const next = new Set(ids);
+          for (const card of cards) next.delete(card.id);
+          for (const id of movableIssueIds) next.add(id);
+          return next;
+        });
+        this.loadedBoardIds.add(boardId);
       } finally {
-        this.boardCardsPromises.delete(boardId);
+        if (this.authService.getToken() === session) this.boardCardsPromises.delete(boardId);
       }
     })();
     this.boardCardsPromises.set(boardId, promise);
     return promise;
   }
 
-  async ensureAllCards(): Promise<void> {
-    if (!environment.useApi) {
+  async ensureAllCards(refresh = false): Promise<void> {
+    const session = this.authService.getToken();
+    if (!environment.useApi || !session) {
       return;
     }
-    if (this.allCardsLoaded()) {
-      return;
-    }
+    this.resetWorkspaceCache(session);
     if (this.allCardsPromise) {
       return this.allCardsPromise;
     }
+    if (this.allCardsLoaded() && !refresh) {
+      return;
+    }
+    const pendingBootstrap = this.bootstrapPromise;
     this.allCardsPromise = (async () => {
       try {
+        await pendingBootstrap?.catch(() => undefined);
+        if (this.authService.getToken() !== session) return;
         const data = await firstValueFrom(this.workApi.bootstrap({ cards: 'all' }));
-        this.mergeCards(data.cards);
+        if (this.authService.getToken() !== session) return;
+        this.state.set({
+          boards: data.boards.map(b => ({ ...b, type: b.type ?? 'standard' })),
+          boardLists: (data.boardLists ?? []).map(list => this.mapBoardList(list)),
+          cards: data.cards,
+          members: data.members,
+          activeTimer: data.activeTimer,
+        });
+        this.movableIssues.set(new Set(data.movableIssueIds ?? []));
+        this.issueListColumns.set(data.boardListColumns ?? {});
+        this.projectTransitions.set(data.projectTransitions ?? {});
         this.allCardsLoaded.set(true);
       } finally {
-        this.allCardsPromise = null;
+        if (this.authService.getToken() === session) this.allCardsPromise = null;
       }
     })();
     return this.allCardsPromise;
+  }
+
+  async loadIssue(reference: string): Promise<WorkCard | undefined> {
+    if (!environment.useApi) {
+      return this.cards().find(card => card.id === reference || this.getIssueKey(card) === reference.toUpperCase());
+    }
+    const session = this.authService.getToken();
+    const [card] = await Promise.all([firstValueFrom(this.workApi.getIssue(reference)), this.loadProjectIndex()]);
+    if (this.authService.getToken() !== session) return undefined;
+    this.replaceCard(card);
+    return card;
+  }
+
+  async loadProjectIndex(): Promise<void> {
+    if (!this.boards().length || this.bootstrapPromise) await this.loadFromApi();
+  }
+
+  updateProjectWorkflow(projectId: string, transitions: ProjectTransition[] | null): void {
+    this.projectTransitions.update(current => {
+      const next = {...current};
+      if (transitions === null) delete next[projectId];
+      else next[projectId] = transitions;
+      return next;
+    });
+  }
+
+  allowedStates(card: WorkCard): WorkColumnId[] {
+    const configured = this.projectTransitions()[card.boardId];
+    return WORK_COLUMNS.map(column => column.id).filter(status => status !== card.columnId
+      && (!configured || configured.some(rule => rule.from === card.columnId && rule.to === status)));
+  }
+
+  private readonly currentListStates = computed(() => new Map(this.boardLists().map(list => [list.id, list.columnId])));
+
+  getBoardListState(listId: string): WorkColumnId | undefined {
+    return this.currentListStates().get(listId) ?? this.issueListColumns()[listId];
+  }
+
+  getIssueDestinations(card: WorkCard, editable = this.movableIssues().has(card.id)): ReadonlyMap<WorkColumnId, WorkBoardList | null> {
+    const destinations = new Map<WorkColumnId, WorkBoardList | null>();
+    if (!editable) return destinations;
+
+    const lists = this.getBoardLists(card.boardId);
+    for (const status of this.allowedStates(card)) {
+      const list = lists.find(candidate => this.getBoardListState(candidate.id) === status);
+      if (list || this.projectTransitions()[card.boardId]) destinations.set(status, list ?? null);
+    }
+    return destinations;
+  }
+
+  async moveIssueToStatus(card: WorkCard, status: WorkColumnId): Promise<WorkCard> {
+    const destinations = this.getIssueDestinations(card);
+    if (!destinations.has(status)) throw new Error('El flujo no admite este estado.');
+    const list = destinations.get(status);
+    const updated = await firstValueFrom(this.workApi.moveIssue(card.id, {
+      columnId: status,
+      boardListId: list?.id,
+      expectedSourceColumn: card.columnId,
+    }));
+    this.replaceCard(updated);
+    return updated;
+  }
+
+  canEditCard(card: WorkCard): boolean {
+    return !environment.useApi || this.movableIssues().has(card.id);
+  }
+
+  async assignIncomingIssue(id: string, boardId: string, assigneeId: string): Promise<WorkCard | void> {
+    if (environment.useApi) {
+      const updated = await firstValueFrom(this.workApi.assignIncomingIssue(id, boardId, assigneeId));
+      this.replaceCard(updated);
+      return updated;
+    }
+    await this.moveCardToBoard(id, boardId, 'todo');
+    return this.updateCardAsync(id, {assigneeId});
   }
 
   async loadDashboard(options?: string | { projectId?: string; startDate?: string; endDate?: string }): Promise<void> {
@@ -175,12 +321,14 @@ export class WorkService {
       this.dashboardMetrics.set(this.getDashboardMetrics() as DashboardResponse);
       return;
     }
+    const session = this.authService.getToken();
+    const request = ++this.dashboardRequest;
     this.dashboardLoading.set(true);
     try {
       const metrics = await firstValueFrom(this.workApi.getDashboard(filters));
-      this.dashboardMetrics.set(metrics);
+      if (request === this.dashboardRequest && this.authService.getToken() === session) this.dashboardMetrics.set(metrics);
     } finally {
-      this.dashboardLoading.set(false);
+      if (request === this.dashboardRequest && this.authService.getToken() === session) this.dashboardLoading.set(false);
     }
   }
 
@@ -189,7 +337,9 @@ export class WorkService {
       return;
     }
     try {
+      const session = this.authService.getToken();
       const prefs = await firstValueFrom(this.workApi.getUserPreferences());
+      if (this.authService.getToken() !== session) return;
       const filter = prefs.activeIssueFilter as WorkIssueFilter;
       if (['all', 'assigned', 'commented', 'mentioned', 'unassigned'].includes(filter)) {
         this.activeSavedSearch.set(filter);
@@ -197,6 +347,19 @@ export class WorkService {
     } catch {
       // Preferencias opcionales; mantener valor por defecto.
     }
+  }
+
+  seedIssueSummary(card: WorkCard, editable: boolean): void {
+    const existing = this.getCard(card.id);
+    const fields = {title: card.title, boardId: card.boardId, boardListId: card.boardListId, columnId: card.columnId,
+      dueDate: card.dueDate, assigneeId: card.assigneeId, priority: card.priority, updatedAt: card.updatedAt};
+    this.replaceCard(existing ? {...existing, ...fields} : card);
+    this.movableIssues.update(ids => {
+      const next = new Set(ids);
+      if (editable) next.add(card.id);
+      else next.delete(card.id);
+      return next;
+    });
   }
 
   async saveActiveSearch(filter: WorkIssueFilter): Promise<void> {
@@ -246,12 +409,6 @@ export class WorkService {
       .sort((a, b) => a.sortOrder - b.sortOrder);
   }
 
-  getCardsInList(boardId: string, listId: string): WorkCard[] {
-    return this.cards()
-      .filter(c => c.boardId === boardId && c.boardListId === listId)
-      .sort((a, b) => a.order - b.order);
-  }
-
   canManageBoardLists(): boolean {
     return this.permissions.canManageBoardLists();
   }
@@ -295,33 +452,63 @@ export class WorkService {
   }
 
   recordBoardVisit(boardId: string): void {
+    if (!this.getBoard(boardId)) return;
     try {
       const recent = this.getRecentBoardIds().filter(id => id !== boardId);
       recent.unshift(boardId);
       localStorage.setItem(RECENT_BOARDS_KEY, JSON.stringify(recent.slice(0, MAX_RECENT_BOARDS)));
+      this.boardPreferencesRevision.update(revision => revision + 1);
     } catch {
       /* ignore */
     }
   }
 
   getRecentBoardIds(): string[] {
+    return this.readAccessibleBoardIds(RECENT_BOARDS_KEY);
+  }
+
+  getFavoriteBoardIds(): string[] {
+    const user = this.authService.currentUser();
+    return user ? this.readAccessibleBoardIds(`${FAVORITE_BOARDS_KEY}:${user.id}`) : [];
+  }
+
+  toggleFavoriteBoard(boardId: string): boolean {
+    const user = this.authService.currentUser();
+    if (!user || !this.getBoard(boardId)) return false;
+    const favorites = this.getFavoriteBoardIds();
+    const next = favorites.includes(boardId)
+      ? favorites.filter(id => id !== boardId)
+      : [...favorites, boardId];
     try {
-      const raw = localStorage.getItem(RECENT_BOARDS_KEY);
+      localStorage.setItem(`${FAVORITE_BOARDS_KEY}:${user.id}`, JSON.stringify(next));
+      this.boardPreferencesRevision.update(revision => revision + 1);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private readAccessibleBoardIds(key: string): string[] {
+    this.boardPreferencesRevision();
+    try {
+      const raw = localStorage.getItem(key);
       if (!raw) return [];
-      const ids = JSON.parse(raw) as string[];
-      return ids.filter(id => !!this.getBoard(id));
+      const ids: unknown = JSON.parse(raw);
+      if (!Array.isArray(ids)) return [];
+      return [...new Set(ids.filter((id): id is string => typeof id === 'string' && !!this.getBoard(id)))];
     } catch {
       return [];
     }
   }
 
   async createIncomingNote(title: string, extra?: {
+    description?: string;
     requesterName?: string;
     requesterPhone?: string;
     requesterEmail?: string;
     receptionChannel?: string;
   }): Promise<WorkCard> {
-    const generalId = this.getGeneralBoardId() ?? this.boards()[0]?.id;
+    const generalId = this.getGeneralBoardId();
     if (!generalId) {
       throw new Error('No hay tablero general disponible');
     }
@@ -333,6 +520,7 @@ export class WorkService {
       listId ?? undefined,
       undefined,
       {
+        description: extra?.description,
         receptionChannel: extra?.receptionChannel ?? 'oficina',
         requesterName: extra?.requesterName,
         requesterPhone: extra?.requesterPhone,
@@ -450,10 +638,11 @@ export class WorkService {
     if (!userId) {
       return this.members()[0]?.id;
     }
-    return this.members().find(m => m.id === userId)?.id ?? this.members()[0]?.id;
+    return this.members().find(m => m.id === userId)?.id ??
+      (environment.useApi ? userId : this.members()[0]?.id);
   }
 
-  private filterIssues(
+  filterIssues(
     cards: WorkCard[],
     search: WorkIssueFilter,
     projectId: string | 'all',
@@ -487,7 +676,7 @@ export class WorkService {
     if (q) {
       list = list.filter(c => {
         const key = this.getIssueKey(c).toLowerCase();
-        return key.includes(q) || c.title.toLowerCase().includes(q) || c.description.toLowerCase().includes(q);
+        return key.includes(q) || c.title.toLowerCase().includes(q) || (c.description ?? '').toLowerCase().includes(q);
       });
     }
 
@@ -577,21 +766,17 @@ export class WorkService {
     return Math.max(0, Math.floor((Date.now() - new Date(timer.startedAt).getTime()) / 1000));
   }
 
-  createBoard(payload: Pick<WorkBoard, 'name' | 'description'>): WorkBoard {
+  async createBoard(payload: Pick<WorkBoard, 'name' | 'description'>): Promise<WorkBoard> {
     if (environment.useApi) {
-      void firstValueFrom(this.workApi.createBoard(payload)).then(async () => {
-        await this.loadFromApi();
-      });
-      return {
-        id: 'pending',
-        name: payload.name,
-        description: payload.description,
-        key: 'PENDING',
-        accent: 'bg-teal-500',
-        memberIds: [],
-        type: 'standard',
-        createdAt: new Date().toISOString(),
-      };
+      const board = await firstValueFrom(this.workApi.createBoard(payload));
+      this.patch({boards: [...this.boards().filter(item => item.id !== board.id), board]});
+      try {
+        const lists = await firstValueFrom(this.workApi.getBoardLists(board.id));
+        this.patch({boardLists: [...this.boardLists().filter(list => list.boardId !== board.id), ...lists.map(list => this.mapBoardList(list))]});
+      } catch {
+        // The board was created. A subsequent bootstrap refreshes its lists.
+      }
+      return board;
     }
     const board: WorkBoard = {
       id: newBoardId(),
@@ -623,21 +808,24 @@ export class WorkService {
   async deleteBoard(boardId: string): Promise<void> {
     if (environment.useApi) {
       await firstValueFrom(this.workApi.deleteBoard(boardId));
-      this.patch({
-        boards: this.boards().filter(board => board.id !== boardId),
-        boardLists: this.boardLists().filter(list => list.boardId !== boardId),
-        cards: this.cards().filter(card => card.boardId !== boardId),
-      });
-      if (this.selectedBoardId() === boardId) {
-        this.selectedBoardId.set('all');
-      }
-      return;
+    }
+    const children = new Map<string, string[]>();
+    for (const board of this.boards()) {
+      if (!board.parentBoardId) continue;
+      const siblings = children.get(board.parentBoardId) ?? [];
+      siblings.push(board.id);
+      children.set(board.parentBoardId, siblings);
+    }
+    const removed = new Set([boardId]);
+    for (const parentId of removed) {
+      for (const childId of children.get(parentId) ?? []) removed.add(childId);
     }
     this.patch({
-      boards: this.boards().filter(board => board.id !== boardId),
-      boardLists: this.boardLists().filter(list => list.boardId !== boardId),
-      cards: this.cards().filter(card => card.boardId !== boardId),
+      boards: this.boards().filter(board => !removed.has(board.id)),
+      boardLists: this.boardLists().filter(list => !removed.has(list.boardId)),
+      cards: this.cards().filter(card => !removed.has(card.boardId)),
     });
+    if (removed.has(this.selectedBoardId())) this.selectedBoardId.set('all');
   }
 
   async createIssue(
@@ -648,21 +836,24 @@ export class WorkService {
     parentIssueId?: string,
     options?: {
       assigneeId?: string | null;
+      description?: string;
       requesterName?: string;
       requesterPhone?: string;
       requesterEmail?: string;
       receptionChannel?: string;
+      customFields?: IssueFieldValues;
     }
   ): Promise<WorkCard> {
     const placement = this.resolveIssuePlacement(boardId, options?.assigneeId ?? null, boardListId);
     const resolvedListId = boardListId ?? placement.boardListId;
-    const resolvedColumnId = boardListId ? columnId : placement.columnId;
+    const resolvedColumnId = options?.receptionChannel ? 'registered' : boardListId ? columnId : placement.columnId;
 
     if (environment.useApi) {
       const card = await firstValueFrom(
         this.workApi.createIssue({
           boardId,
           title,
+          description: options?.description,
           columnId: resolvedColumnId,
           boardListId: resolvedListId,
           parentIssueId,
@@ -671,9 +862,11 @@ export class WorkService {
           requesterPhone: options?.requesterPhone,
           requesterEmail: options?.requesterEmail,
           receptionChannel: options?.receptionChannel,
+          customFields: options?.customFields,
         })
       );
       this.replaceCard(card);
+      this.movableIssues.update(ids => new Set([...ids, card.id]));
       return card;
     }
 
@@ -692,7 +885,7 @@ export class WorkService {
       issueNumber,
       columnId: resolvedColumnId,
       title: title.trim(),
-      description: '',
+      description: options?.description ?? '',
       priority: 'medium',
       assigneeId: assignee,
       dueDate: null,
@@ -702,6 +895,10 @@ export class WorkService {
       comments: [],
       timeEntries: [],
       order: this.nextOrder(boardId, resolvedColumnId),
+      receptionChannel: options?.receptionChannel,
+      requesterName: options?.requesterName,
+      requesterPhone: options?.requesterPhone,
+      requesterEmail: options?.requesterEmail,
       createdAt: now,
       updatedAt: now,
     };
@@ -772,11 +969,10 @@ export class WorkService {
     });
   }
 
-  moveCardToList(cardId: string, listId: string, toIndex?: number): void {
+  async moveCardToList(cardId: string, listId: string, toIndex?: number): Promise<void> {
     if (environment.useApi) {
-      void firstValueFrom(this.workApi.moveIssue(cardId, { boardListId: listId, targetIndex: toIndex })).then(updated => {
-        this.replaceCard(updated);
-      });
+      const updated = await firstValueFrom(this.workApi.moveIssue(cardId, {boardListId: listId, targetIndex: toIndex}));
+      this.replaceCard(updated);
       return;
     }
     const card = this.getCard(cardId);
@@ -788,7 +984,7 @@ export class WorkService {
     void this.updateCardAsync(cardId, patch);
   }
 
-  updateCardAsync(cardId: string, patch: Partial<WorkCard>): Promise<WorkCard | void> {
+  updateCardAsync(cardId: string, patch: Partial<WorkCard>, customFields?: IssueFieldValues): Promise<WorkCard | void> {
     const card = this.getCard(cardId);
     if (!card) return Promise.resolve();
 
@@ -797,22 +993,23 @@ export class WorkService {
 
     if (environment.useApi) {
       const payload: UpdateIssuePayload = {
-        title: merged.title,
-        description: merged.description,
-        columnId: merged.columnId,
-        priority: merged.priority,
-        assigneeId: merged.assigneeId,
-        dueDate: merged.dueDate,
-        estimateMinutes: merged.estimateMinutes,
-        boardListId: merged.boardListId,
-        requesterName: merged.requesterName,
-        requesterPhone: merged.requesterPhone,
-        requesterEmail: merged.requesterEmail,
-        receptionChannel: merged.receptionChannel,
-        startDate: merged.startDate,
-        endDate: merged.endDate,
-        issueType: merged.issueType ?? undefined,
-        observations: merged.observations,
+        title: patch.title,
+        description: patch.description,
+        columnId: patch.columnId,
+        priority: patch.priority,
+        assigneeId: patch.assigneeId === null ? '' : patch.assigneeId,
+        dueDate: patch.dueDate === null ? '' : patch.dueDate,
+        estimateMinutes: patch.estimateMinutes,
+        boardListId: patch.boardListId,
+        requesterName: patch.requesterName,
+        requesterPhone: patch.requesterPhone,
+        requesterEmail: patch.requesterEmail,
+        receptionChannel: patch.receptionChannel,
+        startDate: patch.startDate,
+        endDate: patch.endDate,
+        issueType: patch.issueType === null ? '' : patch.issueType,
+        observations: patch.observations === null ? '' : patch.observations,
+        customFields,
       };
       return firstValueFrom(this.workApi.updateIssue(cardId, payload))
         .then(updated => {
@@ -825,22 +1022,25 @@ export class WorkService {
           this.replaceCard(result);
           return result;
         })
-        .catch(() => {
+        .catch(error => {
           this.replaceCard(card);
-          throw new Error('update failed');
+          throw error;
         });
     }
 
-    const cards = this.cards().map(c => (c.id === cardId ? merged : c));
+    const cards = this.cards().map(c => c.id === cardId ? {
+      ...merged,
+      startDate: merged.startDate || undefined,
+      endDate: merged.endDate || undefined,
+    } : c);
     this.patch({ cards });
     return Promise.resolve(merged);
   }
 
-  moveCard(cardId: string, toColumnId: WorkColumnId, toIndex?: number): void {
+  async moveCard(cardId: string, toColumnId: WorkColumnId, toIndex?: number): Promise<void> {
     if (environment.useApi) {
-      void firstValueFrom(this.workApi.moveIssue(cardId, { columnId: toColumnId, targetIndex: toIndex })).then(updated => {
-        this.replaceCard(updated);
-      });
+      const updated = await firstValueFrom(this.workApi.moveIssue(cardId, { columnId: toColumnId, targetIndex: toIndex }));
+      this.replaceCard(updated);
       return;
     }
 
@@ -946,14 +1146,16 @@ export class WorkService {
     return Promise.resolve();
   }
 
-  addComment(cardId: string, text: string): Promise<WorkComment | void> {
+  addComment(cardId: string, text: string, publicReply = false): Promise<WorkComment | void> {
     if (!text.trim()) return Promise.resolve();
 
     if (environment.useApi) {
-      return firstValueFrom(this.workApi.addComment(cardId, text)).then(comment => {
+      return firstValueFrom(this.workApi.addComment(cardId, text, publicReply)).then(comment => {
         const card = this.getCard(cardId);
         if (!card) return comment;
-        this.replaceCard({ ...card, comments: [...card.comments, comment] });
+        const sla = card.sla && comment.publicReply && !card.sla.firstReplyAt
+          ? {...card.sla, firstReplyAt: comment.createdAt} : card.sla;
+        this.replaceCard({...card, sla, comments: [...card.comments, comment]});
         return comment;
       });
     }
@@ -1114,6 +1316,7 @@ export class WorkService {
       archived: raw.archived,
       createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : String(raw.createdAt),
       updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : String(raw.updatedAt),
+      columnId: raw.columnId,
     };
   }
 

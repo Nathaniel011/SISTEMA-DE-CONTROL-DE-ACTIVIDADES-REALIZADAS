@@ -11,6 +11,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.UUID;
 
 @RestController
@@ -42,7 +44,8 @@ public class WebhookController {
         if (emailWebhookSecret == null || emailWebhookSecret.isBlank()) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body("Webhook no configurado");
         }
-        if (!emailWebhookSecret.equals(secret)) {
+        if (secret == null || !MessageDigest.isEqual(emailWebhookSecret.getBytes(StandardCharsets.UTF_8),
+            secret.getBytes(StandardCharsets.UTF_8))) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid secret");
         }
 
@@ -61,13 +64,11 @@ public class WebhookController {
                 request.senderName(),
                 request.senderPhone(),
                 request.senderEmail(),
-                "correo"
+                "correo",
+                description.length() > 10000 ? description.substring(0, 10000) : description
             );
 
             var card = workService.createIssue(null, createReq);
-            if (description != null && !description.isBlank()) {
-                card = workService.updateWebhookIssueDescription(UUID.fromString(card.id()), description);
-            }
 
             return ResponseEntity.ok(new EmailTicketResponse(
                 card.id(),
@@ -101,13 +102,13 @@ public class WebhookController {
     }
 
     public record EmailTicketRequest(
-        String subject,
-        String body,
-        String senderEmail,
-        String senderName,
-        String senderPhone,
+        @jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Size(max = 500) String subject,
+        @jakarta.validation.constraints.Size(max = 10000) String body,
+        @jakarta.validation.constraints.Email @jakarta.validation.constraints.Size(max = 254) String senderEmail,
+        @jakarta.validation.constraints.Size(max = 160) String senderName,
+        @jakarta.validation.constraints.Size(max = 50) String senderPhone,
         String boardId,
-        java.util.List<String> attachments
+        @jakarta.validation.constraints.Size(max = 20) java.util.List<@jakarta.validation.constraints.Size(max = 500) String> attachments
     ) {}
 
     public record EmailTicketResponse(

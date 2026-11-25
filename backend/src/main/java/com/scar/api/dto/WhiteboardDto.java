@@ -9,5 +9,6 @@ public record WhiteboardDto(
     String contentJson,
     String updatedByName,
     String createdAt,
-    String updatedAt
+    String updatedAt,
+    boolean projectRemoved
 ) {}

@@ -3,7 +3,6 @@ package com.scar.api.service;
 import com.scar.api.domain.entity.Issue;
 import com.scar.api.domain.entity.Project;
 import com.scar.api.domain.entity.User;
-import com.scar.api.domain.enums.IssueColumn;
 import com.scar.api.domain.enums.UserRole;
 import com.scar.api.repository.ProjectRepository;
 import org.springframework.http.HttpStatus;
@@ -75,6 +74,22 @@ public class PermissionService {
         }
     }
 
+    public boolean canReadProjectIssue(User user, Issue issue) {
+        return !issue.isHelpdeskRequest() || canAssignTasks(user)
+            || (issue.getCreatedBy() != null && issue.getCreatedBy().getId().equals(user.getId()))
+            || (issue.getAssignee() != null && issue.getAssignee().getId().equals(user.getId()));
+    }
+
+    public boolean canReadIssue(User user, Issue issue) {
+        return canAccessProject(user, issue.getProject()) && canReadProjectIssue(user, issue);
+    }
+
+    public void requireReadIssue(User user, Issue issue) {
+        if (!canReadIssue(user, issue)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No tiene acceso a esta incidencia");
+        }
+    }
+
     public void requireManageUsers(User user) {
         if (!canManageUsers(user)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Solo administrador o jefa pueden gestionar usuarios");
@@ -123,18 +138,17 @@ public class PermissionService {
         throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No puede editar esta tarea");
     }
 
-    public void requireMoveIssue(User user, Issue issue, IssueColumn newColumn) {
-        requireAccessProject(user, issue.getProject());
-        if (isAdminOrChief(user) || isSecretary(user)) {
-            return;
+    public void requireMoveIssue(User user, Issue issue) {
+        requireReadIssue(user, issue);
+        if (!canMoveAccessibleIssue(user, issue)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No puede mover esta tarea");
         }
-        if (issue.getAssignee() != null && issue.getAssignee().getId().equals(user.getId())) {
-            return;
-        }
-        if (issue.getCreatedBy() != null && issue.getCreatedBy().getId().equals(user.getId())) {
-            return;
-        }
-        throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No puede mover esta tarea");
+    }
+
+    public boolean canMoveAccessibleIssue(User user, Issue issue) {
+        return isAdminOrChief(user) || isSecretary(user)
+            || (issue.getAssignee() != null && issue.getAssignee().getId().equals(user.getId()))
+            || (issue.getCreatedBy() != null && issue.getCreatedBy().getId().equals(user.getId()));
     }
 
     public void requireDeleteIssue(User user, Issue issue) {
@@ -144,7 +158,7 @@ public class PermissionService {
     }
 
     public boolean canDeleteIssue(User user, Issue issue) {
-        if (!canAccessProject(user, issue.getProject())) {
+        if (!canReadIssue(user, issue)) {
             return false;
         }
         if (isAdminOrChief(user) || isSecretary(user)) {

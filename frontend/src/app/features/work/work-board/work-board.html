@@ -1,197 +1,152 @@
 @if (board(); as b) {
-  <div class="yt-content yt-content-standalone work-board-view flex flex-col gap-4">
-    <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-      <div class="flex items-center gap-3 min-w-0">
-        <p-button icon="pi pi-arrow-left" text routerLink="/work/agile" />
-        <button type="button" class="flex items-center gap-3 min-w-0 text-left" (click)="openBoardSwitcher()">
-          <div class="work-board-key" [class]="b.type === 'general' ? 'work-board-key-general' : b.accent">{{ b.key }}</div>
-          <div class="min-w-0">
-            <div class="flex items-center gap-2">
-              <h2 class="text-xl font-semibold m-0 truncate">{{ boardDisplayName(b) }}</h2>
-              <i class="pi pi-chevron-down text-surface-500 text-sm"></i>
-            </div>
-            @if (b.type !== 'general' && b.description) {
-              <p class="text-sm text-surface-500 m-0 mt-1 truncate">{{ b.description }}</p>
-            }
-          </div>
-        </button>
-      </div>
-      <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
-        <p-button label="Crear tarjeta" icon="pi pi-plus" class="mr-2" (onClick)="openCreateCard()" />
-        <p-iconfield class="w-full sm:w-64">
-          <p-inputicon class="pi pi-search" />
-          <input
-            pInputText
-            class="w-full"
-            placeholder="Buscar tarjetas…"
-            [ngModel]="search()"
-            (ngModelChange)="search.set($event)"
-          />
-        </p-iconfield>
-        <p-select
-          [options]="memberFilterOptions()"
-          optionLabel="label"
-          optionValue="value"
-          [ngModel]="assigneeFilter()"
-          (ngModelChange)="assigneeFilter.set($event)"
-          placeholder="Responsable"
-          class="w-full sm:w-48"
-        />
-      </div>
+  <main class="yt-content yt-content-standalone work-board-view flex flex-col gap-3" aria-labelledby="project-board-title">
+    <a routerLink="/work/agile" class="self-start text-sm font-semibold text-primary-800 hover:underline">
+      <i class="pi pi-arrow-left" aria-hidden="true"></i> Volver a tableros
+    </a>
+    <app-work-page-header headingId="project-board-title" [title]="boardDisplayName(b)" icon="pi pi-objects-column"
+      [description]="b.description">
+      <p-button label="Nueva incidencia" ariaLabel="Nueva incidencia" icon="pi pi-plus" (onClick)="openCreateCard()" />
+    </app-work-page-header>
+
+    <div class="work-board-tools flex flex-wrap items-center gap-2" role="group" aria-label="Filtros y vistas del tablero">
+      <p-iconfield class="w-full sm:w-64">
+        <p-inputicon class="pi pi-search" aria-hidden="true" />
+        <input #searchInput pInputText type="search" class="w-full" placeholder="Buscar…" aria-label="Buscar incidencias"
+          [value]="searchDraft()" (input)="updateSearch(searchInput.value)" />
+      </p-iconfield>
+      <p-select [options]="memberFilterOptions()" optionLabel="label" optionValue="value" ariaLabel="Responsable"
+        [ngModel]="assigneeFilter()" (ngModelChange)="updateQuery({member: $event})"
+        placeholder="Responsable" class="w-full sm:w-52" />
+      <p-button label="Incidencias" ariaLabel="Ver en Incidencias" icon="pi pi-list" severity="secondary" [text]="true"
+        routerLink="/work/issues" [queryParams]="{board: b.id, q: searchDraft() || null, member: assigneeFilter()}" />
+      @if (b.type === 'standard') {
+        <p-button label="Planificar" ariaLabel="Planificar" icon="pi pi-calendar" severity="secondary" [text]="true"
+          routerLink="/work/planning" [queryParams]="{board: b.id}" />
+      }
     </div>
 
-    @if (createError(); as err) {
-      <p class="text-sm text-red-600 m-0">{{ err }}</p>
-    }
+    @if (loadingCards()) {
+      <app-work-skeleton label="Cargando incidencias del tablero…" />
+    } @else if (boardLoadError()) {
+      <p class="m-0 text-sm text-red-700" role="alert">No se pudieron cargar las incidencias del tablero.</p>
+      <p-button label="Reintentar" icon="pi pi-refresh" [outlined]="true" (onClick)="loadBoardCards(b.id)" />
+    } @else {
+      <p class="work-board-summary" role="status">
+        @if (!filteredCards().length && (search() || assigneeFilter())) { No hay incidencias que coincidan con los filtros. }
+        @else { {{ filteredCards().length }} {{ filteredCards().length === 1 ? 'incidencia' : 'incidencias' }} }
+      </p>
+      @if (moveError() && !moveCardId()) {
+        <p class="m-0 text-sm text-red-700" role="alert">{{ moveError() }}</p>
+      }
+      <p class="m-0 text-sm text-primary-900" role="status" [class.sr-only]="!moveNotice()">{{ moveNotice() }}</p>
 
-    <div class="work-kanban-scroll">
-      <div class="work-kanban">
-        @for (list of lists(); track list.id) {
-          <div
-            class="work-kanban-column"
-            pDroppable
-            (onDrop)="onDrop(list.id)"
-          >
-            <div class="work-kanban-column-header">
-              @if (editingListId() === list.id) {
-                <div class="flex flex-col gap-2 w-full">
-                  <input
-                    pInputText
-                    class="w-full"
-                    [ngModel]="editingListName()"
-                    (ngModelChange)="editingListName.set($event)"
-                    (keyup.enter)="saveRenameList(list.id)"
-                  />
+      <div #boardCanvas class="work-kanban-scroll" tabindex="0" role="region" aria-label="Listas del tablero">
+        <div class="work-kanban">
+          @if (!columns().length && !workService.canManageBoardLists()) {
+            <p class="work-kanban-empty">Aún no hay listas en este tablero.</p>
+          }
+          @for (column of columns(); track column.list?.id) {
+            @let list = column.list;
+            @let name = list?.name ?? 'Sin lista';
+            <section class="work-kanban-column" [attr.aria-label]="name" [attr.data-state]="column.state ?? null"
+              [class.kanban-drop-available]="list && dropDestinations().has(list.id)"
+              [class.kanban-drop-active]="list && dropTarget() === list.id"
+              (dragover)="list && allowDrop($event, list.id)" (drop)="list && drop($event, list.id)">
+              <header class="work-kanban-column-header">
+                @if (list && editingListId() === list.id) {
+                  <div class="flex w-full flex-col gap-2">
+                    <input pInputText class="w-full" aria-label="Nombre de la lista" [ngModel]="editingListName()"
+                      (ngModelChange)="editingListName.set($event)" (keydown.enter)="saveRenameList(list.id)" (keydown.escape)="cancelRenameList()" />
+                    <div class="flex gap-2">
+                      <p-button label="Guardar" size="small" (onClick)="saveRenameList(list.id)" />
+                      <p-button label="Cancelar" size="small" severity="secondary" text (onClick)="cancelRenameList()" />
+                    </div>
+                  </div>
+                } @else {
+                  <span class="work-kanban-marker" aria-hidden="true"></span>
+                  <h2>{{ name }}</h2>
+                  <span class="work-kanban-count">{{ column.cards.length }}</span>
+                  @if (list && workService.canManageBoardLists()) {
+                    <button class="work-kanban-icon" type="button" [attr.aria-label]="'Renombrar lista ' + name" title="Renombrar lista"
+                      (click)="startRenameList(list)"><i class="pi pi-pencil" aria-hidden="true"></i></button>
+                  }
+                }
+              </header>
+
+              <div class="work-kanban-cards">
+                @for (card of column.cards; track card.id) {
+                  @let issueKey = workService.getIssueKey(card);
+                  @let canMove = destinations().has(card.id);
+                  <article appWorkKanbanCard [navigationParams]="{q: searchDraft() || null}" [card]="card" [issueKey]="issueKey" [member]="workService.getMember(card.assigneeId)"
+                    [attr.draggable]="canMove && !movingCard()" [class.kanban-dragging]="draggedCardId() === card.id"
+                    (dragstart)="startDrag($event, card)" (dragend)="endDrag()">
+                    @if (canMove) {
+                      <button class="work-kanban-icon" type="button" [disabled]="movingCard()"
+                        [attr.aria-label]="'Mover ' + issueKey + ' a otra lista'" title="Mover a otra lista" (click)="openMove(card, $event)">
+                        <i class="pi pi-arrow-right-arrow-left" aria-hidden="true"></i>
+                      </button>
+                    }
+                  </article>
+                } @empty {
+                  <p class="work-kanban-empty">Sin incidencias</p>
+                }
+              </div>
+
+              @if (list) {
+                <button class="work-kanban-add" type="button" [attr.aria-label]="'Añadir incidencia a ' + name" (click)="openCreateCard(list.id)">
+                  <i class="pi pi-plus" aria-hidden="true"></i> Añadir incidencia
+                </button>
+              }
+            </section>
+          }
+
+          @if (workService.canManageBoardLists()) {
+            <section class="work-kanban-column work-kanban-column-add" aria-label="Añadir lista">
+              @if (addingList()) {
+                <div class="flex flex-col gap-2 p-2">
+                  <input pInputText class="w-full" placeholder="Nombre de la lista" aria-label="Nombre de la nueva lista"
+                    [ngModel]="newListName()" (ngModelChange)="newListName.set($event)"
+                    (keydown.enter)="saveNewList()" (keydown.escape)="cancelAddList()" />
                   <div class="flex gap-2">
-                    <p-button label="Guardar" size="small" (onClick)="saveRenameList(list.id)" />
-                    <p-button label="Cancelar" size="small" severity="secondary" text (onClick)="cancelRenameList()" />
+                    <p-button label="Crear lista" size="small" (onClick)="saveNewList()" />
+                    <p-button label="Cancelar" size="small" severity="secondary" text (onClick)="cancelAddList()" />
                   </div>
                 </div>
               } @else {
-                <div class="flex items-center gap-2 flex-1">
-                  <i class="pi pi-list text-primary-500"></i>
-                  <span class="font-semibold">{{ list.name }}</span>
-                  <span class="work-kanban-count">{{ cardsForList(list).length }}</span>
-                </div>
-                @if (workService.canManageBoardLists()) {
-                  <p-button
-                    icon="pi pi-pencil"
-                    text
-                    rounded
-                    size="small"
-                    (onClick)="startRenameList(list)"
-                  />
-                }
-                <p-button
-                  icon="pi pi-plus"
-                  text
-                  rounded
-                  size="small"
-                  (onClick)="openCreateCard(list.id)"
-                />
+                <button class="work-kanban-add" type="button" (click)="startAddList()">
+                  <i class="pi pi-plus" aria-hidden="true"></i> Añadir lista
+                </button>
               }
-            </div>
-
-            <div class="work-kanban-cards">
-              @for (card of cardsForList(list); track card.id) {
-                @let assignee = workService.getMember(card.assigneeId);
-                @let priority = priorityMeta(card.priority);
-                <article
-                  class="work-kanban-card"
-                  pDraggable
-                  (onDragStart)="onDragStart(card)"
-                  (onDragEnd)="draggedCardId.set(null)"
-                  (click)="openCard(card)"
-                >
-                  <h4 class="work-kanban-card-title">{{ card.title }}</h4>
-                  <div class="work-kanban-card-meta">
-                    <span [class]="priority.tone">
-                      <i [class]="priority.icon"></i>
-                    </span>
-                    @if (card.assignedAt) {
-                      <span class="text-xs text-surface-500" title="Asignada">
-                        <i class="pi pi-user-plus"></i>
-                      </span>
-                    }
-                    @if (card.completedAt) {
-                      <span class="text-xs text-emerald-600" title="Finalizada">
-                        <i class="pi pi-check"></i>
-                      </span>
-                    }
-                    @if (card.dueDate) {
-                      <span
-                        class="work-kanban-due"
-                        [class.work-kanban-due-soon]="isDueSoon(card.dueDate)"
-                        [class.work-kanban-due-over]="isOverdue(card.dueDate)"
-                      >
-                        <i class="pi pi-calendar text-xs"></i>
-                        {{ formatDate(card.dueDate) }}
-                      </span>
-                    }
-                    @if (card.trackedMinutes > 0) {
-                      <span
-                        class="text-xs px-1.5 py-0.5 rounded border"
-                        [class]="getTimeOverrunColor(getTimeOverrunStatus(card))"
-                      >
-                        <i class="pi pi-clock"></i> {{ formatMinutes(card.trackedMinutes) }}
-                      </span>
-                    }
-                    @if (assignee) {
-                      <p-avatar
-                        [label]="assignee.initials"
-                        shape="circle"
-                        style="background-color: #ccfbf1; color: #134e4a; width: 1.5rem; height: 1.5rem; font-size: 0.65rem"
-                      />
-                    }
-                  </div>
-                </article>
-              }
-            </div>
-          </div>
-        }
-
-        @if (workService.canManageBoardLists()) {
-          <div class="work-kanban-column work-kanban-column-add">
-            @if (addingList()) {
-              <div class="flex flex-col gap-2 p-3">
-                <input
-                  pInputText
-                  class="w-full"
-                  placeholder="Nombre de la lista"
-                  [ngModel]="newListName()"
-                  (ngModelChange)="newListName.set($event)"
-                  (keyup.enter)="saveNewList()"
-                />
-                <div class="flex gap-2">
-                  <p-button label="Crear lista" size="small" (onClick)="saveNewList()" />
-                  <p-button label="Cancelar" size="small" severity="secondary" text (onClick)="cancelAddList()" />
-                </div>
-              </div>
-            } @else {
-              <p-button
-                label="Añadir lista"
-                icon="pi pi-plus"
-                text
-                class="w-full"
-                (onClick)="startAddList()"
-              />
-            }
-          </div>
-        }
+            </section>
+          }
+        </div>
       </div>
-    </div>
-  </div>
+    }
+  </main>
+} @else if (workService.isLoading()) {
+  <div class="p-4"><app-work-skeleton label="Cargando tablero…" /></div>
 } @else {
-  <div class="p-8 text-center text-surface-500">
+  <div class="p-8 text-center text-surface-600">
     <p class="mb-4">Tablero no encontrado.</p>
-    <p-button label="Volver a tableros" icon="pi pi-arrow-left" routerLink="/work" />
+    <p-button label="Volver a tableros" icon="pi pi-arrow-left" routerLink="/work/agile" />
   </div>
 }
 
-<app-work-card-drawer
-  [visible]="drawerOpen()"
-  (visibleChange)="onDrawerVisibleChange($event)"
-  [cardId]="selectedCardId()"
-/>
+<p-dialog header="Mover incidencia" [visible]="!!moveCardId()" [modal]="true" [draggable]="false" [resizable]="false"
+    [closable]="!movingCard()" [closeOnEscape]="!movingCard()" [style]="{width: 'min(23rem, 94vw)'}"
+    (visibleChange)="!$event && closeMove()" (onHide)="restoreMoveFocus()">
+    <div class="grid gap-3">
+      <label for="work-board-destination" class="font-semibold">Lista de destino</label>
+      <p-select inputId="work-board-destination" ariaLabel="Lista de destino" [options]="moveOptions()"
+        optionLabel="name" optionValue="id" placeholder="Seleccionar lista" [ngModel]="moveTarget()"
+        (ngModelChange)="moveTarget.set($event)" [disabled]="movingCard()" [fluid]="true" appendTo="body" />
+      @if (moveError()) { <p class="m-0 text-sm text-red-700" role="alert">{{ moveError() }}</p> }
+      <div class="flex justify-end gap-2">
+        <p-button label="Cancelar" ariaLabel="Cancelar" severity="secondary" [text]="true" [disabled]="movingCard()" (onClick)="closeMove()" />
+        <p-button label="Mover" ariaLabel="Mover" icon="pi pi-arrow-right" [disabled]="!moveTarget()" [loading]="movingCard()" (onClick)="confirmMove()" />
+      </div>
+    </div>
+</p-dialog>
 
-<app-work-board-switcher />
+<app-work-card-drawer [visible]="drawerOpen()" (visibleChange)="onDrawerVisibleChange($event)" [cardId]="selectedCardId()" />
+<app-work-issue-create (created)="openCard($event)" />

@@ -2,6 +2,7 @@ package com.scar.api.domain.entity;
 
 import jakarta.persistence.*;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 @Entity
@@ -15,6 +16,9 @@ public class KnowledgeArticle {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "project_id")
     private Project project;
+
+    @Column(name = "project_removed", nullable = false)
+    private boolean projectRemoved;
 
     @Column(nullable = false, length = 255)
     private String title;
@@ -40,19 +44,21 @@ public class KnowledgeArticle {
     private User updatedBy;
 
     @Column(name = "created_at", nullable = false, updatable = false)
-    private Instant createdAt = Instant.now();
+    private Instant createdAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
 
     @Column(name = "updated_at", nullable = false)
-    private Instant updatedAt = Instant.now();
+    private Instant updatedAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
 
     @PreUpdate
     void onUpdate() {
-        updatedAt = Instant.now();
+        updatedAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
     }
 
     public UUID getId() { return id; }
     public Project getProject() { return project; }
     public void setProject(Project project) { this.project = project; }
+    public boolean isProjectRemoved() { return projectRemoved; }
+    public void setProjectRemoved(boolean projectRemoved) { this.projectRemoved = projectRemoved; }
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }
     public String getSlug() { return slug; }

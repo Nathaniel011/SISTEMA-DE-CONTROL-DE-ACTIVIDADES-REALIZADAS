@@ -33,7 +33,7 @@ public class PostgresAutoProvisioner implements ApplicationContextInitializer<Co
         String port = env.getProperty("DB_PORT", "5432");
         String dbName = env.getProperty("DB_NAME", "scar");
         String dbUser = env.getProperty("DB_USER", "scar");
-        String dbPassword = env.getProperty("DB_PASSWORD", "60465524");
+        String dbPassword = env.getRequiredProperty("DB_PASSWORD");
 
         String appUrl = jdbcUrl(host, port, dbName);
         if (canConnect(appUrl, dbUser, dbPassword)) {

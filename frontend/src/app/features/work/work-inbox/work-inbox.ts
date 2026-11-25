@@ -1,33 +1,29 @@
-import {ChangeDetectionStrategy, Component, computed, effect, inject, signal} from '@angular/core';
+import {ChangeDetectionStrategy, Component, computed, inject, signal} from '@angular/core';
 import {toSignal} from '@angular/core/rxjs-interop';
 import {ActivatedRoute, Router, RouterLink} from '@angular/router';
-import {map} from 'rxjs';
 import {FormsModule} from '@angular/forms';
 import {Button} from 'primeng/button';
 import {Dialog} from 'primeng/dialog';
 import {Select} from 'primeng/select';
-import {DragDropModule} from 'primeng/dragdrop';
-import {Avatar} from 'primeng/avatar';
+import {InputText} from 'primeng/inputtext';
+import {HttpErrorResponse} from '@angular/common/http';
 import {WorkService} from '../../../core/services/work.service';
-import {WorkCard, WorkColumnId} from '../work.models';
-import {
-  formatWorkDate,
-  formatWorkMinutes,
-  isDueSoon,
-  isOverdue,
-  priorityMeta,
-  getTimeOverrunStatus,
-  getTimeOverrunColor,
-  boardDisplayName,
-  WORK_DRAFT_CARD_TITLE,
-} from '../work.utils';
+import {interval} from 'rxjs';
+import {environment} from '../../../../environments/environment';
+import {WorkCard, WORK_STATUS_LABELS} from '../work.models';
+import {formatWorkDate, boardDisplayName, WORK_DRAFT_CARD_TITLE} from '../work.utils';
 import {WorkCardDrawer} from '../work-card-drawer/work-card-drawer';
+import {WorkWritingField} from '../work-writing-field/work-writing-field';
+import {WorkSkeleton} from '../work-skeleton/work-skeleton';
+import {debouncedAction} from '../../../core/timing/debounced-action';
 
-const SECRETARY_COLUMNS: { id: WorkColumnId; title: string; icon: string }[] = [
-  { id: 'registered', title: ' Registrada', icon: 'pi pi-inbox' },
-  { id: 'in_assignment', title: ' En Asignación', icon: 'pi pi-arrows-alt' },
-  { id: 'todo', title: 'Pendiente', icon: 'pi pi-list' },
-];
+const QUEUES = [
+  {id: 'reception', label: 'Por derivar', icon: 'pi pi-inbox'},
+  {id: 'unassigned', label: 'Sin asignar', icon: 'pi pi-user-minus'},
+  {id: 'risk', label: 'SLA en riesgo', icon: 'pi pi-clock'},
+  {id: 'all', label: 'Todas', icon: 'pi pi-list'},
+] as const;
+type Queue = (typeof QUEUES)[number]['id'];
 
 @Component({
   selector: 'app-work-inbox',
@@ -38,33 +34,52 @@ const SECRETARY_COLUMNS: { id: WorkColumnId; title: string; icon: string }[] = [
     Button,
     Dialog,
     Select,
-    DragDropModule,
-    Avatar,
+    InputText,
     WorkCardDrawer,
+    WorkWritingField,
+    WorkSkeleton,
   ],
   templateUrl: './work-inbox.html',
 })
 export class WorkInbox {
   private route = inject(ActivatedRoute);
-  router = inject(Router);
+  private router = inject(Router);
   workService = inject(WorkService);
 
-  columns = SECRETARY_COLUMNS;
-  boardId = toSignal(
-    this.route.paramMap.pipe(map(params => params.get('boardId') ?? 'all')),
-    { initialValue: 'all' }
-  );
-  search = signal('');
-  assigneeFilter = signal<string | null>(null);
-  selectedCardId = signal<string | null>(null);
-  drawerOpen = signal(false);
+  readonly queues = QUEUES;
+  private params = toSignal(this.route.queryParamMap, {initialValue: this.route.snapshot.queryParamMap});
+  private readonly tick = toSignal(interval(60_000), {initialValue: 0});
+  private readonly now = computed(() => { this.tick(); return Date.now(); });
+  search = computed(() => this.params().get('q') ?? '');
+  assigneeFilter = computed(() => this.params().get('assignee'));
+  channel = computed(() => this.params().get('channel'));
+  queue = computed(() => QUEUES.find(item => item.id === this.params().get('queue'))?.id ?? 'reception');
+  selectedCardId = computed(() => this.params().get('issue'));
+  drawerOpen = computed(() => !!this.selectedCardId() && !!this.workService.getCard(this.selectedCardId()!));
   createError = signal<string | null>(null);
+  inboxLoading = signal(false);
+  inboxError = signal(false);
+  createOpen = signal(false);
+  incomingTitle = signal('');
+  incomingDescription = signal('');
+  incomingName = signal('');
+  incomingEmail = signal('');
+  incomingChannel = signal('oficina');
+  creating = signal(false);
+  announcement = signal('');
   showAssignDialog = signal(false);
   assigningCardId = signal<string | null>(null);
   selectedBoardId = signal<string | null>(null);
   selectedAssigneeId = signal<string | null>(null);
   assigning = signal(false);
   assignError = signal<string | null>(null);
+  channelOptions = [
+    {label: 'Oficina', value: 'oficina'},
+    {label: 'Teléfono', value: 'telefono'},
+    {label: 'Formulario web', value: 'web'},
+    {label: 'Correo', value: 'email'},
+  ];
+  channelFilterOptions = [{label: 'Todos los canales', value: null}, ...this.channelOptions];
 
   boardOptions = computed(() =>
     this.workService.standardBoards().map(b => ({
@@ -79,9 +94,9 @@ export class WorkInbox {
     const board = this.workService.getBoard(boardId);
     if (!board) return [];
     const boardMembers = this.workService.members().filter(m => board.memberIds.includes(m.id));
-    return this.workService
-      .staffMembers()
-      .filter(m => boardMembers.some(b => b.id === m.id))
+    const eligible = new Set(this.workService.assignableMembers().map(member => member.id));
+    return boardMembers
+      .filter(member => eligible.has(member.id))
       .map(m => ({ label: m.name, value: m.id }));
   });
 
@@ -93,92 +108,118 @@ export class WorkInbox {
     { label: 'Todos', value: null },
     ...this.workService.members().map(m => ({ label: m.name, value: m.id })),
   ]);
+  private readonly matching = computed(() => this.workService.filterIssues(this.workService.cards(), 'all', 'all', this.search())
+    .filter(card => card.helpdeskRequest || (!environment.useApi && card.boardId === this.workService.getGeneralBoardId()))
+    .filter(card => card.title !== WORK_DRAFT_CARD_TITLE)
+    .filter(card => !this.assigneeFilter() || card.assigneeId === this.assigneeFilter())
+    .filter(card => !this.channel() || this.channelKey(card) === this.channel()));
+  counts = computed(() => Object.fromEntries(QUEUES.map(({id}) => [id, this.matching().filter(card => this.inQueue(card, id)).length])));
+  results = computed(() => this.matching().filter(card => this.inQueue(card, this.queue())).sort((a, b) =>
+    Date.parse(a.sla?.resolutionDueAt ?? a.createdAt) - Date.parse(b.sla?.resolutionDueAt ?? b.createdAt)));
 
   constructor() {
-    effect(() => {
-      const generalId = this.workService.getGeneralBoardId();
-      if (generalId) {
-        void this.workService.ensureBoardCards(generalId);
-      }
+    void this.loadInbox();
+  }
+
+  async loadInbox(): Promise<void> {
+    if (this.inboxLoading()) return;
+    this.inboxLoading.set(true);
+    this.inboxError.set(false);
+    try {
+      await this.workService.ensureAllCards(true);
+    } catch {
+      this.inboxError.set(true);
+    } finally {
+      this.inboxLoading.set(false);
+    }
+  }
+
+  private readonly searchDelay = debouncedAction(270);
+
+  setFilter(key: string, value: string | null): void {
+    if (key === 'q') {
+      this.searchDelay.schedule(() => this.applyFilter(key, value));
+      return;
+    }
+    this.applyFilter(key, value);
+  }
+
+  private applyFilter(key: string, value: string | null): void {
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: {[key]: value || null},
+      queryParamsHandling: 'merge',
+      replaceUrl: key === 'q',
     });
   }
 
-  cardsForColumn(columnId: WorkColumnId): WorkCard[] {
-    const generalId = this.workService.getGeneralBoardId();
-    let cards = this.workService.cards();
-
-    if (generalId) {
-      cards = cards.filter(c => c.boardId === generalId);
-    }
-
-    cards = cards.filter(c => c.columnId === columnId);
-    const selectedId = this.selectedCardId();
-    cards = cards.filter(
-      c => c.title !== WORK_DRAFT_CARD_TITLE || c.id === selectedId
-    );
-
-    const query = this.search().trim().toLowerCase();
-    if (query) {
-      cards = cards.filter(
-        c =>
-          c.title.toLowerCase().includes(query) ||
-          c.description.toLowerCase().includes(query)
-      );
-    }
-
-    const assignee = this.assigneeFilter();
-    if (assignee) {
-      cards = cards.filter(c => c.assigneeId === assignee);
-    }
-
-    return cards.sort((a, b) => a.order - b.order);
+  private inQueue(card: WorkCard, queue: Queue): boolean {
+    const open = card.columnId !== 'closed' && card.columnId !== 'done';
+    if (queue === 'reception') return this.canRoute(card);
+    if (queue === 'unassigned') return open && !card.assigneeId;
+    if (queue === 'risk') return open && !!this.slaLabel(card);
+    return true;
   }
 
-  openCard(card: WorkCard): void {
-    this.selectedCardId.set(card.id);
-    this.drawerOpen.set(true);
+  canRoute(card: WorkCard): boolean {
+    return card.boardId === this.workService.getGeneralBoardId() &&
+      (card.columnId === 'registered' || card.columnId === 'in_assignment' || card.columnId === 'todo');
   }
 
-  async openCreateCard(columnId: WorkColumnId): Promise<void> {
-    const generalId = this.workService.getGeneralBoardId();
-    if (!generalId) return;
+  slaLabel(card: WorkCard): string | null {
+    const sla = card.sla;
+    if (!sla || sla.resolvedAt || card.columnId === 'done' || card.columnId === 'closed') return null;
+    const deadline = Math.min(Date.parse(sla.resolutionDueAt), card.publicTrackingEnabled && !sla.firstReplyAt
+      ? Date.parse(sla.firstReplyDueAt) : Infinity);
+    if (deadline <= this.now()) return 'SLA vencido';
+    return deadline <= this.now() + 3_600_000 ? 'SLA próximo a vencer' : null;
+  }
+
+  channelKey(card: WorkCard): string {
+    return card.receptionChannel === 'correo' ? 'email' : card.receptionChannel ?? '';
+  }
+
+  channelLabel(card: WorkCard): string {
+    return this.channelOptions.find(item => item.value === this.channelKey(card))?.label ?? 'Sin canal';
+  }
+
+  openCreateCard(): void {
+    if (!this.workService.canAssignTasks()) return;
+    this.createError.set(null);
+    this.createOpen.set(true);
+  }
+
+  async registerRequest(): Promise<void> {
+    const title = this.incomingTitle().trim();
+    if (!title || this.creating() || !this.workService.getGeneralBoardId()) return;
+    this.creating.set(true);
     this.createError.set(null);
     try {
-      const card = await this.workService.createDraftCard({
-        boardId: generalId,
-        columnId,
-        incoming: columnId === 'registered',
+      const card = await this.workService.createIncomingNote(title, {
+        description: this.incomingDescription().trim(),
+        requesterName: this.incomingName().trim(),
+        requesterEmail: this.incomingEmail().trim() || undefined,
+        receptionChannel: this.incomingChannel(),
       });
-      this.selectedCardId.set(card.id);
-      this.drawerOpen.set(true);
+      this.incomingTitle.set('');
+      this.incomingDescription.set('');
+      this.incomingName.set('');
+      this.incomingEmail.set('');
+      this.createOpen.set(false);
+      this.announcement.set(`${this.workService.getIssueKey(card)} · Solicitud registrada`);
     } catch {
-      this.createError.set('No se pudo crear la tarjeta. Inténtalo de nuevo.');
+      this.createError.set('No se pudo registrar la solicitud. Inténtalo de nuevo.');
+    } finally {
+      this.creating.set(false);
     }
   }
 
   onDrawerVisibleChange(open: boolean): void {
-    this.drawerOpen.set(open);
-    if (!open) {
-      this.selectedCardId.set(null);
-    }
-  }
-
-  onDragStart(event: DragEvent, card: WorkCard): void {
-    event.dataTransfer?.setData('text/plain', card.id);
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = 'move';
-    }
-  }
-
-  onDrop(event: DragEvent, columnId: WorkColumnId): void {
-    event.preventDefault();
-    const cardId = event.dataTransfer?.getData('text/plain');
-    if (cardId) {
-      this.workService.moveCard(cardId, columnId);
-    }
+    if (!open) this.setFilter('issue', null);
   }
 
   openAssignDialog(card: WorkCard): void {
+    if (!this.workService.canAssignTasks()) return;
     this.assigningCardId.set(card.id);
     this.selectedBoardId.set(null);
     this.selectedAssigneeId.set(null);
@@ -205,31 +246,21 @@ export class WorkInbox {
     const assigneeId = this.selectedAssigneeId();
     if (!cardId || !boardId || !assigneeId || this.assigning()) return;
 
-    const lists = this.workService.getBoardLists(boardId);
-    const listId = lists.find(l => l.name.toLowerCase() === 'tarea')?.id ?? lists[0]?.id;
-
     this.assigning.set(true);
     this.assignError.set(null);
     try {
-      await this.workService.moveCardToBoard(cardId, boardId, 'todo', undefined, listId);
-      await this.workService.updateCardAsync(cardId, { assigneeId });
+      const updated = await this.workService.assignIncomingIssue(cardId, boardId, assigneeId);
+      if (updated) this.announcement.set(`${this.workService.getIssueKey(updated)} · Solicitud asignada y enviada`);
       this.closeAssignDialog();
     } catch (err) {
       const message =
-        err instanceof Error && err.message !== 'update failed'
-          ? err.message
-          : 'No se pudo asignar. Verifica el tablero y el técnico.';
-      this.assignError.set(message);
+        err instanceof HttpErrorResponse && typeof err.error?.message === 'string' ? err.error.message : '';
+      this.assignError.set(message || 'No se pudo asignar. Verifica el tablero y el responsable.');
     } finally {
       this.assigning.set(false);
     }
   }
 
-  formatMinutes = formatWorkMinutes;
   formatDate = formatWorkDate;
-  priorityMeta = priorityMeta;
-  isDueSoon = isDueSoon;
-  isOverdue = isOverdue;
-  getTimeOverrunStatus = getTimeOverrunStatus;
-  getTimeOverrunColor = getTimeOverrunColor;
+  labels = WORK_STATUS_LABELS;
 }

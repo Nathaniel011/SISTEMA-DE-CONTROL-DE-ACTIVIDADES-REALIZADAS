@@ -1,14 +1,19 @@
 package com.scar.api.dto;
 
 import java.util.List;
+import java.util.Map;
 
 public record WorkBootstrapDto(
     List<BoardDto> boards,
     List<BoardListDto> boardLists,
     List<CardDto> cards,
     List<MemberDto> members,
-    ActiveTimerDto activeTimer
+    ActiveTimerDto activeTimer,
+    List<String> movableIssueIds,
+    Map<String, String> boardListColumns,
+    Map<String, List<ProjectConfigurationDto.Transition>> projectTransitions
 ) {
+    public record ProjectCardsDto(List<CardDto> cards, List<String> movableIssueIds) {}
     public record BoardDto(
         String id,
         String name,
@@ -21,7 +26,7 @@ public record WorkBootstrapDto(
         String createdAt
     ) {}
     public record MemberDto(String id, String name, String initials, String role, List<String> roles) {}
-    public record CommentDto(String id, String authorId, String text, String createdAt) {}
+    public record CommentDto(String id, String authorId, String text, String createdAt, boolean publicReply) {}
     public record TimeEntryDto(String id, String memberId, int minutes, String note, String loggedAt, String activityType) {}
     public record CardDto(
         String id,
@@ -53,7 +58,10 @@ public record WorkBootstrapDto(
         String endDate,
         String issueType,
         String observations,
-        List<AttachmentDto> attachments
+        List<AttachmentDto> attachments,
+        boolean helpdeskRequest,
+        boolean publicTrackingEnabled,
+        HelpdeskDto.Sla sla
     ) {}
 
     public record AttachmentDto(

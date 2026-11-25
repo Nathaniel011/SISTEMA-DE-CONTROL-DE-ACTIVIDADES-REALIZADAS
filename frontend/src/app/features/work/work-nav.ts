@@ -6,14 +6,17 @@ export interface WorkNavItem {
 }
 
 export const WORK_NAV_ITEMS: WorkNavItem[] = [
-  { id: 'inbox', label: 'Bandeja de entrada', icon: 'pi pi-inbox', route: '/work/inbox' },
   { id: 'issues', label: 'Incidencias', icon: 'pi pi-list', route: '/work/issues' },
-  { id: 'dashboards', label: 'Paneles', icon: 'pi pi-th-large', route: '/work/dashboards' },
   { id: 'agile', label: 'Tableros', icon: 'pi pi-objects-column', route: '/work/agile' },
+  { id: 'projects', label: 'Proyectos', icon: 'pi pi-folder', route: '/work/projects' },
+  { id: 'inbox', label: 'Bandeja de entrada', icon: 'pi pi-inbox', route: '/work/inbox' },
+  { id: 'personal', label: 'Mi espacio', icon: 'pi pi-calendar-plus', route: '/work/personal' },
+  { id: 'dashboards', label: 'Paneles', icon: 'pi pi-th-large', route: '/work/dashboards' },
   { id: 'reports', label: 'Informes', icon: 'pi pi-chart-bar', route: '/work/reports' },
   { id: 'knowledge', label: 'Base de conocimiento', icon: 'pi pi-book', route: '/work/knowledge' },
   { id: 'timesheets', label: 'Partes de horas', icon: 'pi pi-clock', route: '/work/timesheets' },
-  { id: 'gantt', label: 'Diagramas de Gantt', icon: 'pi pi-calendar', route: '/work/gantt' },
+  { id: 'planning', label: 'Planificación', icon: 'pi pi-calendar', route: '/work/planning' },
+  { id: 'gantt', label: 'Diagramas de Gantt', icon: 'pi pi-chart-bar', route: '/work/gantt' },
   { id: 'whiteboards', label: 'Pizarras', icon: 'pi pi-palette', route: '/work/whiteboards' },
 ];
 

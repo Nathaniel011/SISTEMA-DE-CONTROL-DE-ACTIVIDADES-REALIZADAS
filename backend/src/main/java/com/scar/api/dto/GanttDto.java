@@ -28,7 +28,12 @@ public record GanttDto(
         boolean hasChildren,
         String rowType,
         String projectId,
-        String boardListId
+        String boardListId,
+        String assigneeId,
+        int trackedMinutes,
+        String dueDate,
+        boolean pinned,
+        boolean canEdit
     ) {}
     public record GanttLinkDto(String id, String source, String target, String type) {}
 }

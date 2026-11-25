@@ -29,7 +29,7 @@ if (Test-Path $psql) {
     if ($check -eq "1") { $dbReady = $true }
 }
 
-if (-not $dbReady -and ($env:DB_ADMIN_PASSWORD -eq "CAMBIA_ESTO" -or [string]::IsNullOrWhiteSpace($env:DB_ADMIN_PASSWORD))) {
+if (-not $dbReady -and [string]::IsNullOrWhiteSpace($env:DB_ADMIN_PASSWORD)) {
     Write-Host ""
     Write-Host "La base '$($env:DB_NAME)' no existe todavia."
     Write-Host "Edita dev/local.env y pon DB_ADMIN_PASSWORD con tu contraseña de postgres local."
@@ -64,5 +64,5 @@ Write-Host ""
 Write-Host "Listo."
 Write-Host "  Frontend: http://localhost:4200"
 Write-Host "  Backend:  http://localhost:8080"
-Write-Host "  pgAdmin:  localhost:5432 / base scar / usuario scar / contraseña 60465524"
+Write-Host "  Base de datos: $($env:DB_HOST):$($env:DB_PORT) / $($env:DB_NAME)"
 Write-Host ""

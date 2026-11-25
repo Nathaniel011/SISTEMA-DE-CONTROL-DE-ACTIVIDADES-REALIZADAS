@@ -13,11 +13,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import org.springframework.http.MediaType;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -29,7 +31,13 @@ public class WhiteboardService {
     private final ProjectRepository projectRepository;
     private final UserRepository userRepository;
     private final PermissionService permissionService;
-    private final Map<UUID, CopyOnWriteArrayList<SseEmitter>> emitters = new ConcurrentHashMap<>();
+    private final Map<UUID, CopyOnWriteArrayList<Subscription>> emitters = new ConcurrentHashMap<>();
+
+    private record Subscription(SseEmitter emitter, String projectId, boolean projectRemoved) {
+        boolean matches(WhiteboardDto board) {
+            return projectRemoved == board.projectRemoved() && Objects.equals(projectId, board.projectId());
+        }
+    }
 
     public WhiteboardService(
         WhiteboardRepository whiteboardRepository,
@@ -89,6 +97,7 @@ public class WhiteboardService {
             Project project = loadProject(request.projectId());
             if (project != null) {
                 permissionService.requireAccessProject(currentUser, project);
+                board.setProjectRemoved(false);
             }
             board.setProject(project);
         }
@@ -102,7 +111,7 @@ public class WhiteboardService {
             board.setContentJson(validContent(request.contentJson()));
         }
         board.setUpdatedBy(loadUser(principal.userId()));
-        WhiteboardDto dto = toDto(whiteboardRepository.save(board));
+        WhiteboardDto dto = toDto(whiteboardRepository.saveAndFlush(board));
         broadcast(id, dto);
         return dto;
     }
@@ -120,11 +129,16 @@ public class WhiteboardService {
         Whiteboard board = loadWhiteboard(id);
         requireBoardAccess(principal, board);
         WhiteboardDto current = toDto(board);
-        SseEmitter emitter = new SseEmitter(0L);
-        emitters.computeIfAbsent(id, key -> new CopyOnWriteArrayList<>()).add(emitter);
-        emitter.onCompletion(() -> removeEmitter(id, emitter));
-        emitter.onTimeout(() -> removeEmitter(id, emitter));
-        emitter.onError(error -> removeEmitter(id, emitter));
+        SseEmitter emitter = new SseEmitter(60_000L);
+        var subscription = new Subscription(emitter, current.projectId(), current.projectRemoved());
+        emitters.compute(id, (key, existing) -> {
+            var subscriptions = existing == null ? new CopyOnWriteArrayList<Subscription>() : existing;
+            subscriptions.add(subscription);
+            return subscriptions;
+        });
+        emitter.onCompletion(() -> removeEmitter(id, subscription));
+        emitter.onTimeout(() -> removeEmitter(id, subscription));
+        emitter.onError(error -> removeEmitter(id, subscription));
         send(emitter, "whiteboard", current);
         return emitter;
     }
@@ -145,12 +159,16 @@ public class WhiteboardService {
     }
 
     private void requireBoardAccess(ScarPrincipal principal, Whiteboard board) {
+        if (board.isProjectRemoved() && !permissionService.isAdminOrChief(loadCurrentUser(principal))) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Pizarra no encontrada");
+        }
         if (board.getProject() != null) {
             permissionService.requireAccessProject(loadCurrentUser(principal), board.getProject());
         }
     }
 
     private boolean canAccessBoard(User user, Whiteboard board) {
+        if (board.isProjectRemoved()) return permissionService.isAdminOrChief(user);
         return board.getProject() == null || permissionService.canAccessProject(user, board.getProject());
     }
 
@@ -177,46 +195,43 @@ public class WhiteboardService {
     }
 
     private void broadcast(UUID id, WhiteboardDto dto) {
-        CopyOnWriteArrayList<SseEmitter> list = emitters.get(id);
+        List<Subscription> list = emitters.get(id);
         if (list == null) {
             return;
         }
-        for (SseEmitter emitter : list) {
-            if (!send(emitter, "whiteboard", dto)) {
-                removeEmitter(id, emitter);
-            }
+        for (Subscription subscription : list) {
+            if (!subscription.matches(dto)) {
+                removeEmitter(id, subscription);
+                subscription.emitter().complete();
+            } else if (!send(subscription.emitter(), "whiteboard", dto)) removeEmitter(id, subscription);
         }
     }
 
     private void broadcastDeleted(UUID id) {
-        CopyOnWriteArrayList<SseEmitter> list = emitters.get(id);
+        List<Subscription> list = emitters.remove(id);
         if (list == null) {
             return;
         }
-        for (SseEmitter emitter : list) {
-            if (!send(emitter, "deleted", id.toString())) {
-                removeEmitter(id, emitter);
-            }
+        for (Subscription subscription : list) {
+            send(subscription.emitter(), "deleted", id.toString());
+            subscription.emitter().complete();
         }
     }
 
     private boolean send(SseEmitter emitter, String eventName, Object data) {
         try {
-            emitter.send(SseEmitter.event().name(eventName).data(data));
+            emitter.send(SseEmitter.event().name(eventName).data(data, MediaType.APPLICATION_JSON));
             return true;
         } catch (IOException | IllegalStateException ex) {
             return false;
         }
     }
 
-    private void removeEmitter(UUID id, SseEmitter emitter) {
-        CopyOnWriteArrayList<SseEmitter> list = emitters.get(id);
-        if (list != null) {
-            list.remove(emitter);
-            if (list.isEmpty()) {
-                emitters.remove(id);
-            }
-        }
+    private void removeEmitter(UUID id, Subscription subscription) {
+        emitters.computeIfPresent(id, (key, list) -> {
+            list.remove(subscription);
+            return list.isEmpty() ? null : list;
+        });
     }
 
     private WhiteboardDto toDto(Whiteboard board) {
@@ -229,7 +244,8 @@ public class WhiteboardService {
             board.getContentJson(),
             board.getUpdatedBy() != null ? board.getUpdatedBy().getFullName() : null,
             board.getCreatedAt().toString(),
-            board.getUpdatedAt().toString()
+            board.getUpdatedAt().toString(),
+            board.isProjectRemoved()
         );
     }
 }

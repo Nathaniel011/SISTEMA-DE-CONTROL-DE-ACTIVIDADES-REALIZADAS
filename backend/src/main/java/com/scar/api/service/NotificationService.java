@@ -7,8 +7,10 @@ import com.scar.api.domain.enums.NotificationType;
 import com.scar.api.dto.NotificationDto;
 import com.scar.api.repository.NotificationRepository;
 import com.scar.api.repository.UserRepository;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.UUID;
@@ -18,27 +20,38 @@ public class NotificationService {
 
     private final NotificationRepository notificationRepository;
     private final UserRepository userRepository;
+    private final PermissionService permissions;
 
-    public NotificationService(NotificationRepository notificationRepository, UserRepository userRepository) {
+    public NotificationService(NotificationRepository notificationRepository, UserRepository userRepository, PermissionService permissions) {
         this.notificationRepository = notificationRepository;
         this.userRepository = userRepository;
+        this.permissions = permissions;
     }
 
     @Transactional(readOnly = true)
     public List<NotificationDto> list(UUID userId) {
-        return notificationRepository.findByUserIdOrderByCreatedAtDesc(userId)
-            .stream().map(this::toDto).toList();
+        return visibleNotifications(userId).stream().map(this::toDto).toList();
     }
 
     @Transactional(readOnly = true)
     public long unreadCount(UUID userId) {
-        return notificationRepository.countByUserIdAndReadFlagFalse(userId);
+        return visibleNotifications(userId).stream().filter(item -> !item.isReadFlag()).count();
+    }
+
+    private List<Notification> visibleNotifications(UUID userId) {
+        User user = userRepository.findByIdWithRoles(userId).filter(User::isActive)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED));
+        return notificationRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
+            .filter(item -> item.getIssue() != null && permissions.canReadIssue(user, item.getIssue())).toList();
     }
 
     @Transactional
     public void markRead(UUID userId, UUID notificationId) {
-        Notification n = notificationRepository.findById(notificationId).orElseThrow();
-        if (!n.getUser().getId().equals(userId)) return;
+        Notification n = notificationRepository.findById(notificationId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Notificación no encontrada"));
+        if (!n.getUser().getId().equals(userId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Notificación no encontrada");
+        }
         n.setReadFlag(true);
         notificationRepository.save(n);
     }
@@ -76,6 +89,7 @@ public class NotificationService {
     }
 
     private void create(User user, NotificationType type, String title, String message, Issue issue) {
+        if (!user.isActive() || !permissions.canReadIssue(user, issue)) return;
         Notification n = new Notification();
         n.setUser(user);
         n.setType(type);

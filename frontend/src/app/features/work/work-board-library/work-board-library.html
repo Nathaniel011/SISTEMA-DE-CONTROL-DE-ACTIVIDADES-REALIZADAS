@@ -1,0 +1,99 @@
+<main class="yt-content yt-content-standalone flex flex-col gap-5" aria-labelledby="board-library-title">
+  <app-work-page-header headingId="board-library-title" title="Tableros" icon="pi pi-objects-column"
+    description="Organiza las incidencias por estado y mueve el trabajo entre columnas.">
+    <p-button label="Nuevo tablero" ariaLabel="Nuevo tablero" icon="pi pi-plus"
+      [disabled]="demo || loading() || !!loadError() || !projects().length" (onClick)="openEditor()" />
+  </app-work-page-header>
+
+  @if (loading()) {
+    <app-work-skeleton label="Cargando tableros…" />
+  } @else if (loadError()) {
+    <div class="rounded-xl border border-surface-200 bg-surface-0 p-4">
+      <p role="alert" class="mt-0 text-red-700">{{ loadError() }}</p>
+      <p-button label="Reintentar" ariaLabel="Reintentar" icon="pi pi-refresh" [outlined]="true" (onClick)="load()" />
+    </div>
+  } @else {
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <input pInputText type="search" class="w-full sm:max-w-sm" aria-label="Buscar tableros"
+        placeholder="Buscar tableros…" [ngModel]="query()" (ngModelChange)="query.set($event)" />
+      <a routerLink="/work/agile/vista" class="inline-flex items-center gap-2 text-sm font-semibold text-primary-800 hover:underline">
+        <i class="pi pi-objects-column" aria-hidden="true"></i> Abrir tablero global
+      </a>
+    </div>
+
+    <section class="grid gap-3" aria-labelledby="personal-boards-title">
+      <h2 id="personal-boards-title" class="m-0 text-lg font-semibold">Mis tableros</h2>
+      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        @for (board of matchingBoards(); track board.id) {
+          <article class="grid gap-3 rounded-xl border border-surface-200 bg-surface-0 p-4">
+            <div class="flex items-start justify-between gap-2">
+              <a [routerLink]="['/work/agile/configurado', board.id]" class="min-w-0 break-words font-semibold text-primary-900 hover:underline">{{ board.name }}</a>
+              <div class="flex shrink-0 gap-1">
+                <p-button icon="pi pi-pencil" [ariaLabel]="'Editar ' + board.name" size="small" severity="secondary" [text]="true" (onClick)="openEditor(board)" />
+                <p-button icon="pi pi-trash" [ariaLabel]="'Eliminar ' + board.name" size="small" severity="secondary" [text]="true" (onClick)="requestDelete(board)" />
+              </div>
+            </div>
+            <p class="m-0 break-words text-sm text-surface-600">{{ projectNames(board) || 'Sin proyectos disponibles' }}</p>
+          </article>
+        } @empty {
+          <p class="m-0 text-sm text-surface-600 sm:col-span-2 xl:col-span-3">
+            @if (query().trim()) { No hay tableros guardados que coincidan. }
+            @else if (demo) { Los tableros guardados requieren conexión con SCAR. }
+            @else { Crea un tablero para reunir el trabajo de uno o varios proyectos. }
+          </p>
+        }
+      </div>
+    </section>
+
+    <section class="grid gap-3" aria-labelledby="project-boards-title">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 id="project-boards-title" class="m-0 text-lg font-semibold">Por proyecto</h2>
+        <a routerLink="/work/projects" class="text-sm font-semibold text-primary-800 hover:underline">Ver proyectos</a>
+      </div>
+      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        @for (project of matchingProjects(); track project.id) {
+          @let stats = this.stats(project.id);
+          <a [routerLink]="['/work/agile', project.id]" class="group grid gap-2 rounded-xl border border-surface-200 bg-surface-0 p-4 hover:border-primary-400 focus-visible:outline-2">
+            <div class="flex items-center gap-3">
+              <span class="rounded-md bg-primary-50 px-2 py-1 text-xs font-semibold text-primary-800">{{ project.key }}</span>
+              <span class="min-w-0 flex-1 break-words font-semibold text-surface-900">{{ displayName(project) }}</span>
+              <i class="pi pi-arrow-right text-primary-700" aria-hidden="true"></i>
+            </div>
+            <span class="text-sm text-surface-600">{{ stats.total }} incidencias · {{ stats.inProgress }} en curso</span>
+          </a>
+        } @empty {
+          <p class="m-0 text-sm text-surface-600">No hay proyectos disponibles para esta búsqueda.</p>
+        }
+      </div>
+    </section>
+  }
+</main>
+
+<p-dialog [header]="editing() ? 'Editar tablero' : 'Nuevo tablero'" [visible]="showEditor()" [modal]="true"
+  [draggable]="false" [closable]="!busy()" [closeOnEscape]="!busy()" [style]="{width: 'min(94vw, 28rem)'}"
+  (visibleChange)="showEditor.set($event)">
+  <form class="grid gap-3" (ngSubmit)="save()">
+    <label for="agile-name" class="font-medium">Nombre</label>
+    <input id="agile-name" pInputText name="name" [ngModel]="name()" (ngModelChange)="name.set($event)" maxlength="80" [disabled]="busy()" required />
+    <label for="agile-projects" class="font-medium">Proyectos del tablero</label>
+    <p-multiselect inputId="agile-projects" name="projects" ariaLabel="Proyectos del tablero" [options]="projectOptions()"
+      optionLabel="label" optionValue="value" [ngModel]="projectIds()" (ngModelChange)="projectIds.set($event ?? [])"
+      [filter]="true" [fluid]="true" [disabled]="busy()" appendTo="body" placeholder="Seleccionar proyectos" />
+    @if (actionError()) { <p class="m-0 text-red-700" role="alert">{{ actionError() }}</p> }
+    <div class="flex justify-end gap-2">
+      <p-button label="Cancelar" ariaLabel="Cancelar" severity="secondary" [text]="true" [disabled]="busy()" (onClick)="showEditor.set(false)" />
+      <p-button label="Guardar tablero" ariaLabel="Guardar tablero" type="submit" icon="pi pi-check"
+        [disabled]="!name().trim() || !projectIds().length" [loading]="busy()" />
+    </div>
+  </form>
+</p-dialog>
+
+<p-dialog header="Eliminar tablero" [modal]="true" [visible]="!!deleting()" [draggable]="false"
+  [closable]="!busy()" [closeOnEscape]="!busy()" [style]="{width: 'min(94vw, 27rem)'}" (visibleChange)="!$event && deleting.set(null)">
+  <p class="mt-0">¿Eliminar la vista «{{ deleting()?.name }}»?</p>
+  @if (actionError()) { <p class="text-red-700" role="alert">{{ actionError() }}</p> }
+  <div class="flex justify-end gap-2">
+    <p-button label="Cancelar" ariaLabel="Cancelar" severity="secondary" [text]="true" [disabled]="busy()" (onClick)="deleting.set(null)" />
+    <p-button label="Eliminar tablero" ariaLabel="Eliminar tablero" severity="danger" [loading]="busy()" (onClick)="remove()" />
+  </div>
+</p-dialog>

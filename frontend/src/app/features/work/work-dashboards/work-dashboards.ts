@@ -4,6 +4,8 @@ import {RouterLink} from '@angular/router';
 import {Button} from 'primeng/button';
 import {ChartModule} from 'primeng/chart';
 import {WorkService} from '../../../core/services/work.service';
+import {ThemeService} from '../../../core/services/theme.service';
+import {workBarChartOptions} from '../work-chart-options';
 import {formatWorkMinutes} from '../work.utils';
 
 @Component({
@@ -13,10 +15,12 @@ import {formatWorkMinutes} from '../work.utils';
 })
 export class WorkDashboards implements OnInit {
   workService = inject(WorkService);
+  private readonly theme = inject(ThemeService);
 
   loadError = signal<string | null>(null);
   startDate = signal('');
   endDate = signal('');
+  appliedRange = signal<{createdFrom: string | null; createdTo: string | null}>({createdFrom: null, createdTo: null});
 
   metrics = computed(() => {
     const apiMetrics = this.workService.dashboardMetrics();
@@ -32,7 +36,7 @@ export class WorkDashboards implements OnInit {
       labels: data.map(d => d.label),
       datasets: [{
         data: data.map(d => d.count),
-        backgroundColor: ['#94a3b8', '#14b8a6', '#0f766e'],
+        backgroundColor: ['#738399', '#009587', '#397e76'],
         borderRadius: 6,
       }],
     };
@@ -44,20 +48,13 @@ export class WorkDashboards implements OnInit {
       labels: data.map(d => d.label),
       datasets: [{
         data: data.map(d => d.count),
-        backgroundColor: ['#ef4444', '#f59e0b', '#64748b'],
+        backgroundColor: ['#de4747', '#b47708', '#738399'],
         borderRadius: 6,
       }],
     };
   });
 
-  chartOptions = {
-    maintainAspectRatio: false,
-    plugins: { legend: { display: false } },
-    scales: {
-      x: { ticks: { color: '#64748b' }, grid: { display: false } },
-      y: { ticks: { color: '#64748b', stepSize: 1 }, grid: { color: 'rgba(148,163,184,0.15)' } },
-    },
-  };
+  readonly chartOptions = computed(() => workBarChartOptions(this.theme.isDark(), true));
 
   formatMinutes = formatWorkMinutes;
 
@@ -67,12 +64,18 @@ export class WorkDashboards implements OnInit {
 
   async reloadDashboard(): Promise<void> {
     this.loadError.set(null);
-    await this.workService.loadDashboard({
-      startDate: this.startDate() || undefined,
-      endDate: this.endDate() || undefined,
-    }).catch(() => {
+    const startDate = this.startDate() || undefined;
+    const endDate = this.endDate() || undefined;
+    try {
+      await this.workService.loadDashboard({startDate, endDate});
+      this.appliedRange.set({createdFrom: startDate ?? null, createdTo: endDate ?? null});
+    } catch {
       this.loadError.set('No se pudieron cargar las métricas del panel.');
-    });
+    }
+  }
+
+  issueFilters(group?: 'open' | 'progress', scope?: 'unassigned') {
+    return {...this.appliedRange(), group, scope, view: 'list'};
   }
 
   clearFilters(): void {

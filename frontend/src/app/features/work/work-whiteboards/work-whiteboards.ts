@@ -64,11 +64,15 @@ export class WorkWhiteboards implements OnInit, OnDestroy {
   content = signal<WhiteboardContent>(EMPTY_CONTENT);
   loading = signal(false);
   saving = signal(false);
+  saveError = signal(false);
+  private dirty = false;
+  private saveInFlight?: Promise<boolean>;
   lastSyncedAt = signal<string | null>(null);
   boardName = signal('');
   boardDescription = signal('');
 
-  private eventSource: EventSource | null = null;
+  private eventAbort: AbortController | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private pointerState: PointerState | null = null;
 
@@ -116,7 +120,10 @@ export class WorkWhiteboards implements OnInit, OnDestroy {
       if (next) {
         this.selectWhiteboard(next);
       } else {
-        await this.createWhiteboard();
+        this.closeEvents();
+        this.selectedWhiteboardId.set(null);
+        this.selectedElementId.set(null);
+        this.content.set(EMPTY_CONTENT);
       }
     } finally {
       this.loading.set(false);
@@ -124,6 +131,7 @@ export class WorkWhiteboards implements OnInit, OnDestroy {
   }
 
   async createWhiteboard(): Promise<void> {
+    if (!await this.canLeave()) return;
     const boardId = this.selectedBoardId();
     const payload: WhiteboardPayload = {
       projectId: boardId,
@@ -139,7 +147,9 @@ export class WorkWhiteboards implements OnInit, OnDestroy {
     this.selectWhiteboard(board);
   }
 
-  selectWhiteboard(board: WhiteboardDto): void {
+  async selectWhiteboard(board: WhiteboardDto): Promise<void> {
+    if (board.id === this.selectedWhiteboardId()) return;
+    if (!await this.canLeave()) return;
     this.closeEvents();
     this.selectedWhiteboardId.set(board.id);
     this.selectedElementId.set(null);
@@ -152,7 +162,7 @@ export class WorkWhiteboards implements OnInit, OnDestroy {
 
   async deleteWhiteboard(): Promise<void> {
     const id = this.selectedWhiteboardId();
-    if (!id) {
+    if (!id || !await this.canLeave()) {
       return;
     }
     this.closeEvents();
@@ -260,21 +270,51 @@ export class WorkWhiteboards implements OnInit, OnDestroy {
   }
 
   scheduleSave(): void {
+    if (!this.selectedWhiteboardId()) return;
+    this.dirty = true;
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
     }
-    this.saveTimer = setTimeout(() => void this.saveCurrentWhiteboard(), 450);
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null;
+      void this.saveCurrentWhiteboard();
+    }, 450);
   }
 
-  async saveCurrentWhiteboard(): Promise<void> {
-    const id = this.selectedWhiteboardId();
-    if (!id) {
-      return;
-    }
+  canLeave(): Promise<boolean> {
+    return this.saveCurrentWhiteboard();
+  }
+
+  @HostListener('window:beforeunload', ['$event'])
+  protectPendingSave(event: BeforeUnloadEvent): void {
+    if ((this.dirty || this.saving()) && this.authService.isAuthenticated()) event.preventDefault();
+  }
+
+  saveCurrentWhiteboard(): Promise<boolean> {
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = null;
+    if (this.saveInFlight) return this.saveInFlight;
+    if (!this.dirty) return Promise.resolve(true);
     this.saving.set(true);
-    try {
+    this.saveError.set(false);
+    this.saveInFlight = this.flushChanges().catch(() => {
+      this.dirty = true;
+      this.saveError.set(true);
+      return false;
+    }).finally(() => {
+      this.saveInFlight = undefined;
+      this.saving.set(false);
+    });
+    return this.saveInFlight;
+  }
+
+  private async flushChanges(): Promise<boolean> {
+    while (this.dirty) {
+      const id = this.selectedWhiteboardId();
+      if (!id) return false;
+      this.dirty = false;
       const payload: WhiteboardPayload = {
-        projectId: this.selectedBoard()?.projectId ?? this.selectedBoardId(),
+        projectId: this.selectedBoard()?.projectId ?? null,
         name: this.boardName().trim() || 'Pizarra sin titulo',
         description: this.boardDescription(),
         contentJson: JSON.stringify(this.content()),
@@ -283,14 +323,14 @@ export class WorkWhiteboards implements OnInit, OnDestroy {
         ? await firstValueFrom(this.workApi.updateWhiteboard(id, payload))
         : this.updateLocalBoard(id, payload);
       this.upsertBoard(saved);
-      this.lastSyncedAt.set(saved.updatedAt);
+      if (this.selectedWhiteboardId() === id) this.lastSyncedAt.set(saved.updatedAt);
       this.persistLocalBoards();
-    } finally {
-      this.saving.set(false);
     }
+    return true;
   }
 
   async applyBoardFilter(): Promise<void> {
+    if (!await this.canLeave()) return;
     await this.loadWhiteboards();
   }
 
@@ -320,27 +360,70 @@ export class WorkWhiteboards implements OnInit, OnDestroy {
     if (!token) {
       return;
     }
-    const source = new EventSource(this.workApi.whiteboardEventsUrl(id, token));
-    source.addEventListener('whiteboard', event => {
-      const board = JSON.parse((event as MessageEvent).data) as WhiteboardDto;
-      if (board.id !== this.selectedWhiteboardId()) {
-        return;
+    const connection = new AbortController();
+    this.eventAbort = connection;
+    void this.readEvents(id, token, connection);
+  }
+
+  private closeEvents(): void {
+    this.eventAbort?.abort();
+    this.eventAbort = null;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+  }
+
+  private async readEvents(id: string, token: string, connection: AbortController): Promise<void> {
+    let retry = true;
+    try {
+      const stream = await fetch(this.workApi.whiteboardEventsUrl(id), {
+        headers: {Authorization: `Bearer ${token}`, Accept: 'text/event-stream'},
+        signal: connection.signal,
+        redirect: 'error',
+      });
+      if ([401, 403, 404].includes(stream.status)) { retry = false; return; }
+      if (!stream.ok || !stream.body) return;
+      const reader = stream.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer = '';
+      try {
+        while (!connection.signal.aborted) {
+          const {done, value} = await reader.read();
+          if (done) break;
+          buffer += value;
+          const frames = buffer.split(/\r?\n\r?\n/);
+          buffer = frames.pop() ?? '';
+          for (const frame of frames) this.handleEvent(frame, id);
+          if (buffer.length > 2_000_000) break;
+        }
+      } finally {
+        await reader.cancel().catch(() => undefined);
       }
+    } catch {
+      // A failed stream is reopened while the same board is selected.
+    } finally {
+      if (retry && !connection.signal.aborted && this.eventAbort === connection && this.selectedWhiteboardId() === id) {
+        this.reconnectTimer = setTimeout(() => this.connectEvents(id), 3000);
+      }
+    }
+  }
+
+  private handleEvent(frame: string, id: string): void {
+    if (id !== this.selectedWhiteboardId()) return;
+    const lines = frame.split(/\r?\n/);
+    const event = lines.find(line => line.startsWith('event:'))?.slice(6).trim();
+    if (event === 'deleted') { void this.loadWhiteboards(); return; }
+    if (event !== 'whiteboard') return;
+    try {
+      const board = JSON.parse(lines.filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n')) as WhiteboardDto;
+      if (board.id !== id) return;
       this.upsertBoard(board);
+      if (this.saving() || this.dirty) return;
       this.boardName.set(board.name);
       this.boardDescription.set(board.description ?? '');
       this.content.set(this.parseContent(board.contentJson));
       this.lastSyncedAt.set(board.updatedAt);
-    });
-    source.addEventListener('deleted', () => {
-      void this.loadWhiteboards();
-    });
-    this.eventSource = source;
-  }
-
-  private closeEvents(): void {
-    this.eventSource?.close();
-    this.eventSource = null;
+    } catch {
+      // A malformed event is discarded without closing the stream.
+    }
   }
 
   private parseContent(value: string): WhiteboardContent {

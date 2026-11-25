@@ -1,0 +1,18 @@
+:host {
+  --wave-100: var(--p-primary-100);
+  --wave-200: var(--p-primary-200);
+  --wave-300: var(--p-primary-300);
+  --wave-400: var(--p-primary-400);
+  --wave-500: var(--p-primary-500);
+}
+:host-context(.scar-dark) {
+  --wave-100: color-mix(in srgb, var(--p-primary-950) 40%, var(--p-surface-950));
+  --wave-200: color-mix(in srgb, var(--p-primary-950) 72%, var(--p-surface-950));
+  --wave-300: var(--p-primary-950);
+  --wave-400: color-mix(in srgb, var(--p-primary-900) 45%, var(--p-primary-950));
+  --wave-500: var(--p-primary-900);
+}
+.login-card {
+  background: var(--p-content-background);
+  border-color: var(--p-content-border-color);
+}

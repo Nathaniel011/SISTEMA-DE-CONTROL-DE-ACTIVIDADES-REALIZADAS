@@ -2,6 +2,8 @@ import {HttpClient} from '@angular/common/http';
 import {inject, Injectable} from '@angular/core';
 import {map, Observable} from 'rxjs';
 import {environment} from '../../../environments/environment';
+import type {IssueQuery} from '../../features/work/work-issues/work-issue-query';
+import {IssueFieldValue, IssueFieldValues, ProjectTransition} from './project-configuration-api.service';
 import {
   WorkActiveTimer,
   WorkBoard,
@@ -21,16 +23,52 @@ export interface WorkBootstrapResponse {
   cards: WorkCard[];
   members: WorkMember[];
   activeTimer: WorkActiveTimer | null;
+  movableIssueIds?: string[];
+  boardListColumns?: Record<string, WorkColumnId>;
+  projectTransitions?: Record<string, ProjectTransition[]>;
+}
+
+interface ProjectCards {
+  cards: WorkCard[];
+  movableIssueIds: string[];
+}
+
+export type IssuePageRow = Pick<WorkCard, 'id' | 'boardId' | 'boardListId' | 'issueNumber' | 'columnId'
+  | 'title' | 'priority' | 'assigneeId' | 'dueDate' | 'updatedAt'> & {canEdit: boolean};
+
+export interface IssuePageResult {
+  items: IssuePageRow[];
+  counts: Record<'all' | 'assigned' | 'overdue' | 'unassigned', number>;
+  total: number;
+  page: number;
+}
+
+export interface IssuePageQuery {
+  page: number;
+  size: number;
+  text: string;
+  terms: IssueQuery['terms'];
+  projects: string[] | null;
+  member: string | null;
+  status: string | null;
+  priority: string | null;
+  group: string | null;
+  activity: string | null;
+  scope: string;
+  sort: string;
+  createdFrom: string | null;
+  createdTo: string | null;
+  today: string;
 }
 
 export interface GanttTask {
   id: string;
   key: string;
   title: string;
-  start: string;
-  end: string;
+  start: string | null;
+  end: string | null;
   columnId: WorkColumnId;
-  assigneeName: string;
+  assigneeName: string | null;
   progress: number;
   parentId?: string | null;
   estimateMinutes?: number | null;
@@ -42,6 +80,11 @@ export interface GanttTask {
   rowType?: 'PROJECT' | 'LIST' | 'TASK';
   projectId?: string;
   boardListId?: string | null;
+  assigneeId?: string | null;
+  trackedMinutes?: number;
+  dueDate?: string | null;
+  pinned?: boolean;
+  canEdit?: boolean;
 }
 
 export interface GanttLink {
@@ -98,6 +141,8 @@ export interface KnowledgeArticle {
   updatedByName: string | null;
   createdAt: string;
   updatedAt: string;
+  canEdit: boolean;
+  projectRemoved: boolean;
 }
 
 export interface KnowledgeArticlePayload {
@@ -106,12 +151,15 @@ export interface KnowledgeArticlePayload {
   content?: string;
   tags?: string[];
   status?: 'draft' | 'published' | 'archived';
+  clearProject?: boolean;
+  expectedUpdatedAt?: string;
 }
 
 export interface WhiteboardDto {
   id: string;
   projectId: string | null;
   projectName: string | null;
+  projectRemoved?: boolean;
   name: string;
   description: string;
   contentJson: string;
@@ -156,6 +204,18 @@ export interface IssueDetailsResponse {
   comments: WorkComment[];
   timeEntries: WorkTimeEntry[];
   attachments: WorkAttachment[];
+  activity?: WorkActivity[];
+  customFields?: IssueFieldValue[];
+  canEdit?: boolean;
+}
+
+export interface WorkActivity {
+  id: string;
+  actor: string;
+  action: string;
+  before: string | null;
+  after: string | null;
+  createdAt: string;
 }
 
 export interface UpdateIssuePayload {
@@ -175,6 +235,7 @@ export interface UpdateIssuePayload {
   endDate?: string;
   issueType?: string;
   observations?: string | null;
+  customFields?: IssueFieldValues;
 }
 
 export interface DashboardResponse {
@@ -209,8 +270,8 @@ export class WorkApiService {
     return this.http.get<WorkBootstrapResponse>(`${this.base}/api/work/bootstrap`, { params });
   }
 
-  getProjectCards(projectId: string): Observable<WorkCard[]> {
-    return this.http.get<WorkCard[]>(`${this.base}/api/projects/${projectId}/cards`);
+  getProjectCards(projectId: string): Observable<ProjectCards> {
+    return this.http.get<ProjectCards>(`${this.base}/api/projects/${projectId}/cards`, {params: {includePermissions: true}});
   }
 
   getDashboard(options?: { projectId?: string; startDate?: string; endDate?: string }): Observable<DashboardResponse> {
@@ -231,6 +292,18 @@ export class WorkApiService {
     });
   }
 
+  getIssue(reference: string): Observable<WorkCard> {
+    return this.http.get<WorkCard>(`${this.base}/api/issues/${encodeURIComponent(reference)}`);
+  }
+
+  searchIssues(query: IssuePageQuery): Observable<IssuePageResult> {
+    return this.http.post<IssuePageResult>(`${this.base}/api/work/issues/search`, query);
+  }
+
+  boardCounts(): Observable<Record<string, {total: number; inProgress: number}>> {
+    return this.http.get<Record<string, {total: number; inProgress: number}>>(`${this.base}/api/work/issues/board-counts`);
+  }
+
   getIssueDetails(issueId: string): Observable<IssueDetailsResponse> {
     return this.http.get<IssueDetailsResponse>(`${this.base}/api/issues/${issueId}/details`);
   }
@@ -238,6 +311,7 @@ export class WorkApiService {
   createIssue(payload: {
     boardId: string;
     title: string;
+    description?: string;
     columnId?: WorkColumnId;
     boardListId?: string;
     parentIssueId?: string;
@@ -246,6 +320,7 @@ export class WorkApiService {
     requesterPhone?: string;
     requesterEmail?: string;
     receptionChannel?: string;
+    customFields?: IssueFieldValues;
   }): Observable<WorkCard> {
     return this.http.post<WorkCard>(`${this.base}/api/issues`, payload);
   }
@@ -256,7 +331,13 @@ export class WorkApiService {
 
   moveIssue(
     id: string,
-    options: { columnId?: WorkColumnId; boardListId?: string; targetIndex?: number; targetBoardId?: string }
+    options: {
+      columnId?: WorkColumnId;
+      boardListId?: string;
+      targetIndex?: number;
+      targetBoardId?: string;
+      expectedSourceColumn?: WorkColumnId;
+    }
   ): Observable<WorkCard> {
     return this.http.patch<WorkCard>(`${this.base}/api/issues/${id}/move`, options);
   }
@@ -267,8 +348,24 @@ export class WorkApiService {
       .pipe(map(() => undefined));
   }
 
-  addComment(issueId: string, text: string): Observable<WorkComment> {
-    return this.http.post<WorkComment>(`${this.base}/api/issues/${issueId}/comments`, { text });
+  assignIncomingIssue(id: string, targetBoardId: string, assigneeId: string): Observable<WorkCard> {
+    return this.http.post<WorkCard>(`${this.base}/api/issues/${id}/assign-incoming`, {targetBoardId, assigneeId});
+  }
+
+  addComment(issueId: string, text: string, publicReply = false): Observable<WorkComment> {
+    return this.http.post<WorkComment>(`${this.base}/api/issues/${issueId}/comments`, {text, publicReply});
+  }
+
+  getIssueViews(): Observable<{id: string; name: string; filters: Record<string, string>}[]> {
+    return this.http.get<{id: string; name: string; filters: Record<string, string>}[]>(`${this.base}/api/users/me/issue-views`);
+  }
+
+  saveIssueView(view: {name: string; filters: Record<string, string>}): Observable<{id: string; name: string; filters: Record<string, string>}> {
+    return this.http.post<{id: string; name: string; filters: Record<string, string>}>(`${this.base}/api/users/me/issue-views`, view);
+  }
+
+  deleteIssueView(id: string): Observable<void> {
+    return this.http.delete<void>(`${this.base}/api/users/me/issue-views/${id}`);
   }
 
   logTime(issueId: string, minutes: number, note: string, loggedAt?: string, activityType?: string): Observable<WorkTimeEntry> {
@@ -298,8 +395,8 @@ export class WorkApiService {
     return this.http.get<GanttResponse>(`${this.base}/api/gantt`, { params });
   }
 
-  updateGanttTaskDates(issueId: string, start: string, end: string): Observable<GanttTask> {
-    return this.http.patch<GanttTask>(`${this.base}/api/gantt/tasks/${issueId}`, { start, end });
+  updateGanttTaskDates(issueId: string, change: {start: string | null; end: string | null; estimateMinutes: number | null; pinned: boolean}): Observable<GanttTask> {
+    return this.http.patch<GanttTask>(`${this.base}/api/gantt/tasks/${issueId}`, {...change, updateEstimate: true});
   }
 
   addDependency(issueId: string, dependsOnIssueId: string, dependencyType = 'FINISH_TO_START'): Observable<GanttLink> {
@@ -355,6 +452,10 @@ export class WorkApiService {
     return this.http.post<KnowledgeArticle>(`${this.base}/api/knowledge/articles`, payload);
   }
 
+  getKnowledgeArticle(id: string): Observable<KnowledgeArticle> {
+    return this.http.get<KnowledgeArticle>(`${this.base}/api/knowledge/articles/${encodeURIComponent(id)}`);
+  }
+
   updateKnowledgeArticle(id: string, payload: KnowledgeArticlePayload): Observable<KnowledgeArticle> {
     return this.http.put<KnowledgeArticle>(`${this.base}/api/knowledge/articles/${id}`, payload);
   }
@@ -381,8 +482,8 @@ export class WorkApiService {
     return this.http.delete<void>(`${this.base}/api/whiteboards/${id}`);
   }
 
-  whiteboardEventsUrl(id: string, token: string): string {
-    return `${this.base}/api/whiteboards/${id}/events?access_token=${encodeURIComponent(token)}`;
+  whiteboardEventsUrl(id: string): string {
+    return `${this.base}/api/whiteboards/${encodeURIComponent(id)}/events`;
   }
 
   uploadFile(file: File, issueId: string): Observable<FileUploadResponse> {
@@ -424,7 +525,7 @@ export class WorkApiService {
     return this.http.delete<void>(`${this.base}/api/projects/${boardId}/lists/${listId}`);
   }
 
-  updateBoardMembers(boardId: string, actions: { userId: string; action: string }[]): Observable<any> {
-    return this.http.patch<any>(`${this.base}/api/projects/${boardId}/members`, { actions });
+  updateBoardMembers(boardId: string, actions: { userId: string; action: string }[]): Observable<WorkBoard> {
+    return this.http.patch<WorkBoard>(`${this.base}/api/projects/${boardId}/members`, { actions });
   }
 }

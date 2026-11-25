@@ -1,0 +1,34 @@
+<div class="relative">
+  @if (rows() > 0) {
+    <textarea #field pTextarea class="w-full" [class]="fieldClass()" [id]="inputId()" [rows]="rows()" lang="es"
+      [placeholder]="placeholder()" [value]="value()" [maxLength]="maxLength()" [required]="required()" [disabled]="disabled()"
+      [attr.aria-label]="label()" aria-autocomplete="list" [attr.aria-controls]="suggestions().length ? listId() : null"
+      [attr.aria-activedescendant]="selected() >= 0 ? listId() + '-' + selected() : null"
+      (input)="onInput(field)" (click)="onCaret(field)" (blur)="close()" (keydown)="onKey($event, field)"
+      (keyup.arrowleft)="onCaret(field)" (keyup.arrowright)="onCaret(field)" (keyup.home)="onCaret(field)" (keyup.end)="onCaret(field)"
+      (compositionstart)="composition(true, field)" (compositionend)="composition(false, field)"></textarea>
+    <ng-container [ngTemplateOutlet]="suggestionList" [ngTemplateOutletContext]="{$implicit: field}" />
+  } @else {
+    <input #field pInputText class="w-full" [class]="fieldClass()" [id]="inputId()" lang="es" autocomplete="off"
+      [placeholder]="placeholder()" [value]="value()" [maxLength]="maxLength()" [required]="required()" [disabled]="disabled()"
+      role="combobox" [attr.aria-label]="label()" aria-autocomplete="list" [attr.aria-expanded]="suggestions().length > 0"
+      [attr.aria-controls]="suggestions().length ? listId() : null"
+      [attr.aria-activedescendant]="selected() >= 0 ? listId() + '-' + selected() : null"
+      (input)="onInput(field)" (click)="onCaret(field)" (blur)="close()" (keydown)="onKey($event, field)"
+      (keyup.arrowleft)="onCaret(field)" (keyup.arrowright)="onCaret(field)" (keyup.home)="onCaret(field)" (keyup.end)="onCaret(field)"
+      (compositionstart)="composition(true, field)" (compositionend)="composition(false, field)" />
+    <ng-container [ngTemplateOutlet]="suggestionList" [ngTemplateOutletContext]="{$implicit: field}" />
+  }
+</div>
+<ng-template #suggestionList let-field>
+  @if (suggestions().length) {
+    <ul role="listbox" [id]="listId()" aria-label="Sugerencias en español"
+      class="absolute z-20 m-0 mt-1 list-none min-w-44 max-w-full rounded-lg border border-surface-200 bg-surface-0 p-1 shadow-md">
+      @for (word of suggestions(); track word; let idx = $index) {
+        <li role="option" [id]="listId() + '-' + idx" [attr.aria-selected]="selected() === idx"
+          class="cursor-pointer rounded-md px-3 py-1.5 text-sm text-surface-900 hover:bg-primary-50"
+          [class.bg-primary-100]="selected() === idx" (pointerdown)="$event.preventDefault()" (click)="accept(word, field)">{{ word }}</li>
+      }
+    </ul>
+  }
+</ng-template>

@@ -1,0 +1,101 @@
+x-api: &scar-api
+  build:
+    context: ..
+    dockerfile: deploy/api/Dockerfile
+  environment: &api-environment
+    DB_HOST: ${DB_HOST:-postgres}
+    DB_PORT: ${DB_PORT:-5432}
+    DB_NAME: ${DB_NAME:-scar}
+    DB_USER: ${DB_USER:-scar}
+    DB_PASSWORD: ${DB_PASSWORD:?Define DB_PASSWORD}
+    DB_AUTO_PROVISION: "false"
+    DB_POOL_MAX: ${DB_POOL_MAX:-10}
+    DB_POOL_MIN: ${DB_POOL_MIN:-2}
+    JWT_SECRET: ${JWT_SECRET:?Define JWT_SECRET}
+    SCAR_BOOTSTRAP_ADMIN_PASSWORD: ${SCAR_BOOTSTRAP_ADMIN_PASSWORD:-}
+    SCAR_JOB_WORKER_ENABLED: "false"
+    SCAR_RUM_ENABLED: ${SCAR_RUM_ENABLED:-true}
+    UPLOAD_DIR: /uploads
+    SPRING_DATA_REDIS_HOST: redis
+    SCAR_LOGIN_RATE_LIMIT_BACKEND: redis
+    SCAR_REDIS_HEALTH_ENABLED: "true"
+    OTEL_SERVICE_NAME: scar-api
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+    OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+    OTEL_INSTRUMENTATION_MICROMETER_ENABLED: "true"
+    OTEL_INSTRUMENTATION_JDBC_STATEMENT_SANITIZER_ENABLED: "true"
+    OTEL_TRACES_SAMPLER: always_on
+    OTEL_LOGS_EXPORTER: none
+  volumes:
+    - uploads:/uploads
+  depends_on:
+    - redis
+    - collector
+  restart: unless-stopped
+
+services:
+  api-a:
+    <<: *scar-api
+    environment:
+      <<: *api-environment
+      OTEL_RESOURCE_ATTRIBUTES: service.instance.id=scar-api-a
+  api-b:
+    <<: *scar-api
+    environment:
+      <<: *api-environment
+      SCAR_BOOTSTRAP_ADMIN_PASSWORD: ""
+      OTEL_RESOURCE_ATTRIBUTES: service.instance.id=scar-api-b
+  worker:
+    <<: *scar-api
+    environment:
+      <<: *api-environment
+      SCAR_BOOTSTRAP_ADMIN_PASSWORD: ""
+      SCAR_JOB_WORKER_ENABLED: "true"
+      OTEL_SERVICE_NAME: scar-worker
+      OTEL_RESOURCE_ATTRIBUTES: service.instance.id=scar-worker
+  edge:
+    build:
+      context: ..
+      dockerfile: deploy/edge/Dockerfile
+      args:
+        SCAR_CDN_URL: ${SCAR_CDN_URL:-}
+    ports:
+      - "${SCAR_EDGE_BIND:-127.0.0.1}:${SCAR_EDGE_PORT:-8088}:8080"
+    depends_on:
+      - api-a
+      - api-b
+    restart: unless-stopped
+  postgres:
+    image: postgres:16
+    profiles: [local-db]
+    environment:
+      POSTGRES_DB: ${DB_NAME:-scar}
+      POSTGRES_USER: ${DB_USER:-scar}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Define DB_PASSWORD}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.165.0
+    command: ["--config=/etc/scar-collector.yaml"]
+    volumes:
+      - ./observability/collector.yaml:/etc/scar-collector.yaml:ro
+    restart: unless-stopped
+  prometheus:
+    image: prom/prometheus:v3.16.0
+    volumes:
+      - ./observability/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - metrics:/prometheus
+    ports:
+      - "127.0.0.1:${SCAR_METRICS_PORT:-9090}:9090"
+    depends_on:
+      - collector
+    restart: unless-stopped
+
+volumes:
+  postgres:
+  uploads:
+  metrics:

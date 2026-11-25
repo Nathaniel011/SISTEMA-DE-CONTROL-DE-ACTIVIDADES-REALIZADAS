@@ -31,6 +31,8 @@
           },
           "configurations": {
             "production": {
+              "server": "src/main.server.ts",
+              "outputMode": "static",
               "fileReplacements": [
                 {
                   "replace": "src/environments/environment.ts",
@@ -61,6 +63,15 @@
         },
         "serve": {
           "builder": "@angular/build:dev-server",
+          "options": {
+            "host": "0.0.0.0",
+            "proxyConfig": "src/proxy.conf.json",
+            "allowedHosts": [
+              ".ngrok-free.dev",
+              ".ngrok-free.app",
+              ".ngrok.io"
+            ]
+          },
           "configurations": {
             "production": {
               "buildTarget": "scar-front:build:production"

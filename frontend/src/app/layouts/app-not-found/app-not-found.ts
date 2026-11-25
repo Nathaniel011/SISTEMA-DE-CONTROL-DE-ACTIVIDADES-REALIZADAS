@@ -9,6 +9,10 @@ import {RouterLink} from '@angular/router';
     RouterLink
   ],
   templateUrl: './app-not-found.html',
+  styles: `
+    :host { --wave-color: var(--p-primary-400); }
+    :host-context(.scar-dark) { --wave-color: var(--p-primary-950); }
+  `,
 })
 export class AppNotFound {
 

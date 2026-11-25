@@ -4,10 +4,13 @@ import com.scar.api.dto.*;
 import com.scar.api.security.ScarPrincipal;
 import com.scar.api.service.WorkService;
 import jakarta.validation.Valid;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -18,6 +21,17 @@ public class WorkController {
 
     public WorkController(WorkService workService) {
         this.workService = workService;
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    ResponseEntity<Map<String, String>> workError(ResponseStatusException error) {
+        String message = error.getReason() == null ? "No se pudo completar la operación" : error.getReason();
+        return ResponseEntity.status(error.getStatusCode()).body(Map.of("message", message));
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    ResponseEntity<Map<String, String>> invalidInput() {
+        return ResponseEntity.badRequest().body(Map.of("message", "Los datos de la operación no son válidos"));
     }
 
     @GetMapping("/work/general-board")
@@ -39,6 +53,14 @@ public class WorkController {
         @AuthenticationPrincipal ScarPrincipal principal,
         @PathVariable UUID projectId
     ) {
+        return workService.getProjectCards(principal, projectId).cards();
+    }
+
+    @GetMapping(value = "/projects/{projectId}/cards", params = "includePermissions=true")
+    public WorkBootstrapDto.ProjectCardsDto projectCardsWithPermissions(
+        @AuthenticationPrincipal ScarPrincipal principal,
+        @PathVariable UUID projectId
+    ) {
         return workService.getProjectCards(principal, projectId);
     }
 
@@ -50,6 +72,11 @@ public class WorkController {
         @RequestParam(required = false) String endDate
     ) {
         return workService.getDashboard(principal, projectId, startDate, endDate);
+    }
+
+    @GetMapping("/issues/{reference}")
+    public WorkBootstrapDto.CardDto getIssue(@AuthenticationPrincipal ScarPrincipal principal, @PathVariable String reference) {
+        return workService.getIssue(principal, reference);
     }
 
     @GetMapping("/issues/{id}/details")
@@ -81,9 +108,18 @@ public class WorkController {
     public WorkBootstrapDto.CardDto moveIssue(
         @AuthenticationPrincipal ScarPrincipal principal,
         @PathVariable UUID id,
-        @RequestBody MoveIssueRequest request
+        @Valid @RequestBody MoveIssueRequest request
     ) {
         return workService.moveIssue(principal, id, request);
+    }
+
+    @PostMapping("/issues/{id}/assign-incoming")
+    public WorkBootstrapDto.CardDto assignIncoming(
+        @AuthenticationPrincipal ScarPrincipal principal,
+        @PathVariable UUID id,
+        @Valid @RequestBody AssignIncomingIssueRequest request
+    ) {
+        return workService.assignIncomingIssue(principal, id, request);
     }
 
     @DeleteMapping("/issues/{id}")
@@ -204,11 +240,6 @@ public class WorkController {
         @RequestParam UUID projectId
     ) {
         return workService.recalculateGantt(principal, projectId);
-    }
-
-    @GetMapping("/public/tracking/{token}")
-    public WorkBootstrapDto.CardDto getPublicTracking(@PathVariable String token) {
-        return workService.getPublicTracking(token);
     }
 
     @PostMapping("/projects")

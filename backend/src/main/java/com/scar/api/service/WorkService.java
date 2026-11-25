@@ -29,6 +29,7 @@ import java.util.stream.Collectors;
 public class WorkService {
 
     private static final Pattern MENTION_PATTERN = Pattern.compile("@([a-zA-Z0-9._-]+)");
+    private static final Pattern ISSUE_REFERENCE = Pattern.compile("([A-Z0-9][A-Z0-9_-]{0,30})-([0-9]{1,9})");
     private static final DateTimeFormatter ISO = DateTimeFormatter.ISO_INSTANT;
 
     private final ProjectRepository projectRepository;
@@ -45,6 +46,8 @@ public class WorkService {
     private final GeneralBoardService generalBoardService;
     private final WeeklyPlanExcelService weeklyPlanExcelService;
     private final ActivityLogService activityLogService;
+    private final HelpdeskSlaService helpdeskSla;
+    private final ProjectConfigurationService configuration;
 
     @Value("${scar.upload.dir:./uploads}")
     private String uploadDir;
@@ -63,7 +66,9 @@ public class WorkService {
         PermissionService permissionService,
         GeneralBoardService generalBoardService,
         WeeklyPlanExcelService weeklyPlanExcelService,
-        ActivityLogService activityLogService
+        ActivityLogService activityLogService,
+        HelpdeskSlaService helpdeskSla,
+        ProjectConfigurationService configuration
     ) {
         this.projectRepository = projectRepository;
         this.issueRepository = issueRepository;
@@ -79,6 +84,8 @@ public class WorkService {
         this.generalBoardService = generalBoardService;
         this.weeklyPlanExcelService = weeklyPlanExcelService;
         this.activityLogService = activityLogService;
+        this.helpdeskSla = helpdeskSla;
+        this.configuration = configuration;
     }
 
     @Transactional(readOnly = true)
@@ -92,13 +99,10 @@ public class WorkService {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
 
         List<User> members = userRepository.findByActiveTrue();
-        List<Project> allProjects = projectRepository.findAllWithMembers();
-        List<Project> projects = allProjects.stream()
-            .filter(p -> permissionService.canAccessProject(currentUser, p))
-            .toList();
+        List<Project> projects = visibleProjects(currentUser);
         Set<UUID> accessibleProjectIds = projects.stream().map(Project::getId).collect(Collectors.toSet());
 
-        List<Issue> issues = resolveBootstrapIssues(currentUser, cardsMode, boardId, accessibleProjectIds);
+        List<Issue> issues = readableIssues(currentUser, resolveBootstrapIssues(currentUser, cardsMode, boardId, accessibleProjectIds));
         List<BoardList> boardLists = boardListRepository
             .findByProjectIdInAndArchivedFalseOrderBySortOrderAsc(accessibleProjectIds);
 
@@ -116,34 +120,43 @@ public class WorkService {
 
         return new WorkBootstrapDto(
             projects.stream().map(this::toBoard).toList(),
-            boardLists.stream().map(this::toBoardListDto).toList(),
+            boardLists.stream().map(BoardListDto::from).toList(),
             issues.stream().map(i -> toCardSummary(i, commentsByIssue)).toList(),
             members.stream().map(this::toMember).toList(),
-            timerDto
+            timerDto,
+            issues.stream()
+                .filter(issue -> permissionService.canMoveAccessibleIssue(currentUser, issue))
+                .map(issue -> issue.getId().toString())
+                .toList(),
+            boardLists.stream().collect(Collectors.toMap(
+                list -> list.getId().toString(), list -> list.issueColumn().name()
+            )),
+            configuration.workflows(accessibleProjectIds)
         );
     }
 
     @Transactional(readOnly = true)
-    public List<WorkBootstrapDto.CardDto> getProjectCards(ScarPrincipal principal, UUID projectId) {
+    public WorkBootstrapDto.ProjectCardsDto getProjectCards(ScarPrincipal principal, UUID projectId) {
         User currentUser = userRepository.findByIdWithRoles(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         Project project = projectRepository.findById(projectId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Proyecto no encontrado"));
         permissionService.requireAccessProject(currentUser, project);
 
-        List<Issue> issues = issueRepository.findByProjectId(projectId);
+        List<Issue> issues = readableIssues(currentUser, issueRepository.findByProjectId(projectId));
         Map<UUID, List<IssueComment>> commentsByIssue = loadComments(issues);
-        return issues.stream().map(i -> toCardSummary(i, commentsByIssue)).toList();
+        return new WorkBootstrapDto.ProjectCardsDto(
+            issues.stream().map(issue -> toCardSummary(issue, commentsByIssue)).toList(),
+            issues.stream().filter(issue -> permissionService.canMoveAccessibleIssue(currentUser, issue))
+                .map(issue -> issue.getId().toString()).toList()
+        );
     }
 
     @Transactional(readOnly = true)
     public DashboardDto getDashboard(ScarPrincipal principal, UUID projectId, String startDate, String endDate) {
         User currentUser = userRepository.findByIdWithRoles(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
-        Set<UUID> accessibleProjectIds = projectRepository.findAllWithMembers().stream()
-            .filter(project -> permissionService.canAccessProject(currentUser, project))
-            .map(Project::getId)
-            .collect(Collectors.toSet());
+        Set<UUID> accessibleProjectIds = visibleProjectIds(currentUser);
 
         LocalDate start = parseReportDate(startDate);
         LocalDate end = parseReportDate(endDate);
@@ -162,7 +175,7 @@ public class WorkService {
             issues = issueRepository.findByProjectIdIn(accessibleProjectIds);
             dashboardProjectIds = accessibleProjectIds;
         }
-        issues = issues.stream()
+        issues = readableIssues(currentUser, issues).stream()
             .filter(issue -> issueMatchesReportRange(issue, start, end))
             .toList();
 
@@ -179,7 +192,7 @@ public class WorkService {
         int unassigned = (int) issues.stream().filter(i -> i.getAssignee() == null).count();
         int critical = (int) issues.stream().filter(i -> i.getPriority() == IssuePriority.critical).count();
         int trackedMinutes = (start != null || end != null)
-            ? loadTrackedMinutesForDashboard(dashboardProjectIds, start, end)
+            ? loadTrackedMinutesForDashboard(currentUser, dashboardProjectIds, start, end)
             : issues.stream().mapToInt(Issue::getTrackedMinutes).sum();
 
         int pending = (int) issues.stream()
@@ -211,11 +224,12 @@ public class WorkService {
         );
     }
 
-    private int loadTrackedMinutesForDashboard(Set<UUID> projectIds, LocalDate start, LocalDate end) {
+    private int loadTrackedMinutesForDashboard(User currentUser, Set<UUID> projectIds, LocalDate start, LocalDate end) {
         if (projectIds.isEmpty()) {
             return 0;
         }
         return timeEntryRepository.findByProjectIdIn(projectIds).stream()
+            .filter(entry -> permissionService.canReadProjectIssue(currentUser, entry.getIssue()))
             .filter(entry -> timeEntryMatchesReportRange(entry, start, end))
             .mapToInt(TimeEntry::getMinutes)
             .sum();
@@ -249,15 +263,13 @@ public class WorkService {
     public List<TimeEntryWithIssueDto> listTimeEntries(ScarPrincipal principal) {
         User currentUser = userRepository.findByIdWithRoles(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
-        Set<UUID> accessibleProjectIds = projectRepository.findAllWithMembers().stream()
-            .filter(project -> permissionService.canAccessProject(currentUser, project))
-            .map(Project::getId)
-            .collect(Collectors.toSet());
+        Set<UUID> accessibleProjectIds = visibleProjectIds(currentUser);
 
         if (accessibleProjectIds.isEmpty()) {
             return List.of();
         }
         return timeEntryRepository.findByProjectIdIn(accessibleProjectIds).stream()
+            .filter(entry -> permissionService.canReadProjectIssue(currentUser, entry.getIssue()))
             .map(entry -> new TimeEntryWithIssueDto(
                 entry.getId().toString(),
                 entry.getIssue().getId().toString(),
@@ -277,15 +289,41 @@ public class WorkService {
     }
 
     @Transactional(readOnly = true)
+    public WorkBootstrapDto.CardDto getIssue(ScarPrincipal principal, String reference) {
+        User user = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED));
+        UUID stableId = null;
+        try {
+            stableId = UUID.fromString(reference);
+        } catch (IllegalArgumentException ignored) {
+            // Public references also accept the readable identifier.
+        }
+        Issue issue;
+        if (stableId != null) {
+            issue = loadIssue(stableId);
+        } else {
+            Matcher match = ISSUE_REFERENCE.matcher(reference.toUpperCase(Locale.ROOT));
+            if (!match.matches()) throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+            issue = issueRepository.findByProject_KeyCodeAndIssueNumber(match.group(1), Integer.parseInt(match.group(2)))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        }
+        if (!permissionService.canReadIssue(user, issue)) throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+        return toCardLight(issue);
+    }
+
+    @Transactional(readOnly = true)
     public IssueDetailsDto getIssueDetails(ScarPrincipal principal, UUID issueId) {
         User currentUser = userRepository.findByIdWithRoles(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         Issue issue = loadIssue(issueId);
-        permissionService.requireAccessProject(currentUser, issue.getProject());
+        permissionService.requireReadIssue(currentUser, issue);
         return new IssueDetailsDto(
             mapComments(commentRepository.findByIssueIdWithAuthorOrderByCreatedAtAsc(issueId)),
             mapTimeEntries(timeEntryRepository.findByIssueIdOrderByLoggedAtDesc(issueId)),
-            mapAttachments(attachmentRepository.findByIssueIdOrderByCreatedAtDesc(issueId))
+            mapAttachments(attachmentRepository.findByIssueIdOrderByCreatedAtDesc(issueId)),
+            activityLogService.issueHistory(issueId),
+            configuration.fieldValues(issue),
+            permissionService.canMoveAccessibleIssue(currentUser, issue)
         );
     }
 
@@ -303,7 +341,12 @@ public class WorkService {
         Project project;
 
         if (incoming) {
-            project = generalBoardService.ensureGeneralBoardExists();
+            if (req.boardId() != null && !req.boardId().isBlank()) {
+                project = projectRepository.findById(UUID.fromString(req.boardId()))
+                    .orElseGet(generalBoardService::ensureGeneralBoardExists);
+            } else {
+                project = generalBoardService.ensureGeneralBoardExists();
+            }
             column = IssueColumn.registered;
         } else {
             project = projectRepository.findById(UUID.fromString(req.boardId()))
@@ -312,26 +355,32 @@ public class WorkService {
 
         if (currentUser != null) {
             permissionService.requireCreateIssue(currentUser, project);
+            if (incoming && !permissionService.canAssignTasks(currentUser)) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No puede registrar solicitudes para terceros");
+            }
         }
 
-        int nextNum = issueRepository.findTopByProjectIdOrderByIssueNumberDesc(project.getId())
-            .map(i -> i.getIssueNumber() + 1).orElse(1);
+        int nextNum = nextIssueNumber(project.getId());
 
         Issue issue = new Issue();
         issue.setProject(project);
         issue.setIssueNumber(nextNum);
         issue.setColumnId(column);
         issue.setTitle(req.title().trim());
+        issue.setDescription(req.description() == null ? null : req.description().strip());
+        issue.setHelpdeskRequest(incoming);
         issue.setCreatedBy(currentUser);
 
         User assignee = null;
         if (req.assigneeId() != null && !req.assigneeId().isBlank()) {
-            if (!permissionService.canAssignTasks(currentUser)) {
+            if (currentUser == null || !permissionService.canAssignTasks(currentUser)) {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No puede asignar tareas a otras personas");
             }
             assignee = userRepository.findByIdWithRoles(UUID.fromString(req.assigneeId()))
+                .filter(User::isActive)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Responsable no encontrado"));
             permissionService.requireValidAssignee(currentUser, assignee);
+            permissionService.requireAccessProject(assignee, project);
         } else if (currentUser != null && permissionService.isStaff(currentUser)
             && !permissionService.isAdminOrChief(currentUser)
             && !permissionService.isSecretary(currentUser)) {
@@ -351,15 +400,21 @@ public class WorkService {
         if (targetList != null) {
             issue.setBoardList(targetList);
             issue.setSortOrder(nextIssueListOrder(project.getId(), targetList.getId()));
-            column = mapColumnFromList(targetList);
+            column = incoming ? IssueColumn.registered : targetList.issueColumn();
             issue.setColumnId(column);
         } else {
             issue.setSortOrder(nextIssueOrder(project.getId(), column));
         }
 
         if (req.parentIssueId() != null && !req.parentIssueId().isBlank()) {
+            if (currentUser == null) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No se puede vincular incidencia padre sin usuario");
+            }
             Issue parent = loadIssue(UUID.fromString(req.parentIssueId()));
-            permissionService.requireAccessProject(currentUser, parent.getProject());
+            permissionService.requireReadIssue(currentUser, parent);
+            if (!parent.getProject().getId().equals(project.getId()) || parent.isHelpdeskRequest()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La incidencia padre debe ser una tarea del mismo tablero");
+            }
             issue.setParentIssue(parent);
             if (issue.getBoardList() == null && parent.getBoardList() != null) {
                 issue.setBoardList(parent.getBoardList());
@@ -377,26 +432,71 @@ public class WorkService {
         if (req.receptionChannel() != null) issue.setReceptionChannel(req.receptionChannel().trim());
 
         issue = issueRepository.save(issue);
+        if (req.customFields() != null && !req.customFields().isEmpty()) {
+            issueRepository.flush();
+            configuration.saveFieldValues(issue, currentUser, req.customFields(), false);
+        }
         return toCard(issue);
     }
 
     @Transactional
-    public WorkBootstrapDto.CardDto updateWebhookIssueDescription(UUID issueId, String description) {
-        Issue issue = loadIssue(issueId);
-        issue.setDescription(description);
-        issue = issueRepository.save(issue);
-        return toCard(issue);
+    public HelpdeskDto.Receipt submitPublicRequest(HelpdeskDto.Submission request) {
+        Project general = generalBoardService.findGeneralBoard()
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE));
+        projectRepository.findByIdForUpdate(general.getId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE));
+        Issue existing = issueRepository.findBySubmissionKey(request.requestId()).orElse(null);
+        String email = request.email().strip().toLowerCase(Locale.ROOT);
+        if (existing != null) {
+            if (!Objects.equals(existing.getRequesterEmail(), email) || !existing.isPublicTrackingEnabled()) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT);
+            }
+            return new HelpdeskDto.Receipt(publicReference(existing), existing.getPublicToken());
+        }
+
+        var card = createIssue(null, new CreateIssueRequest(general.getId().toString(), request.title(),
+            IssueColumn.registered.name(), null, null, null, request.name(), null, email, "web", request.description()));
+        Issue issue = loadIssue(UUID.fromString(card.id()));
+        issue.setSubmissionKey(request.requestId());
+        issue.setPublicTrackingEnabled(true);
+        return new HelpdeskDto.Receipt(publicReference(issue), issue.getPublicToken());
     }
 
     @Transactional
     public WorkBootstrapDto.CardDto updateIssue(ScarPrincipal principal, UUID issueId, UpdateIssueRequest req) {
         User currentUser = userRepository.findByIdWithRoles(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
-        Issue issue = loadIssue(issueId);
-        permissionService.requireAccessProject(currentUser, issue.getProject());
+        Issue issue = loadIssueForUpdate(issueId);
+        permissionService.requireReadIssue(currentUser, issue);
         permissionService.requireUpdateIssue(currentUser, issue, req.assigneeId());
         IssueColumn oldColumn = issue.getColumnId();
+        BoardList oldList = issue.getBoardList();
+        BoardList newList = oldList;
+        IssueColumn newColumn = req.columnId() == null ? oldColumn : parseIssueColumn(req.columnId());
+        if (req.boardListId() != null && !req.boardListId().isBlank()
+            && (oldList == null || !oldList.getId().toString().equals(req.boardListId()))) {
+            newList = requireActiveIssueList(issue.getProject().getId(), req.boardListId());
+            newColumn = newList.issueColumn();
+            if (req.columnId() != null && newColumn != parseIssueColumn(req.columnId())) {
+                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "La lista no corresponde al estado destino");
+            }
+        } else if (newColumn != oldColumn) {
+            newList = listForState(issue.getProject().getId(), newColumn);
+        }
+        if (oldList != newList || oldColumn != newColumn) {
+            permissionService.requireMoveIssue(currentUser, issue);
+            configuration.requireTransition(issue.getProject().getId(), oldColumn, newColumn);
+            issue.setBoardList(newList);
+            issue.setColumnId(newColumn);
+            applyCompletionState(issue, oldColumn, newColumn, oldList, newList);
+            if (oldColumn != newColumn) {
+                activityLogService.log(issue, currentUser, "column", oldColumn.name(), newColumn.name());
+            }
+        }
 
+        if (req.title() != null && req.title().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El asunto es obligatorio");
+        }
         if (req.title() != null && !req.title().trim().equals(issue.getTitle())) {
             activityLogService.log(issue, currentUser, "title", issue.getTitle(), req.title().trim());
             issue.setTitle(req.title().trim());
@@ -404,21 +504,6 @@ public class WorkService {
         if (req.description() != null && !Objects.equals(req.description(), issue.getDescription())) {
             activityLogService.log(issue, currentUser, "description", issue.getDescription(), req.description());
             issue.setDescription(req.description());
-        }
-        if (req.columnId() != null) {
-            IssueColumn newColumn = IssueColumn.valueOf(req.columnId());
-            if (!newColumn.equals(issue.getColumnId())) {
-                activityLogService.log(issue, currentUser, "column", issue.getColumnId().name(), newColumn.name());
-            }
-            issue.setColumnId(newColumn);
-        }
-        if (req.boardListId() != null && !req.boardListId().isBlank()) {
-            BoardList list = boardListRepository.findByIdAndProjectId(
-                UUID.fromString(req.boardListId()), issue.getProject().getId()
-            ).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Lista no encontrada"));
-            issue.setBoardList(list);
-            issue.setColumnId(mapColumnFromList(list));
-            applyCompletionFromList(issue, list, oldColumn);
         }
         if (req.priority() != null) {
             if (!req.priority().equals(issue.getPriority().name())) {
@@ -435,9 +520,12 @@ public class WorkService {
                 }
             }
             UUID assigneeId = req.assigneeId().isBlank() ? null : UUID.fromString(req.assigneeId());
-            User newAssignee = assigneeId == null ? null : userRepository.findByIdWithRoles(assigneeId).orElse(null);
+            User newAssignee = assigneeId == null ? null : userRepository.findByIdWithRoles(assigneeId)
+                .filter(User::isActive)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Responsable no encontrado"));
             if (newAssignee != null) {
                 permissionService.requireValidAssignee(currentUser, newAssignee);
+                permissionService.requireAccessProject(newAssignee, issue.getProject());
             }
             User oldAssignee = issue.getAssignee();
 
@@ -457,18 +545,22 @@ public class WorkService {
             }
         }
         if (req.dueDate() != null) {
-            issue.setDueDate(req.dueDate().isBlank() ? null : LocalDate.parse(req.dueDate()));
+            LocalDate dueDate = parseOptionalIssueDate(req.dueDate());
+            activityLogService.log(issue, currentUser, "due_date",
+                issue.getDueDate() == null ? null : issue.getDueDate().toString(),
+                dueDate == null ? null : dueDate.toString());
+            issue.setDueDate(dueDate);
         }
         if (req.estimateMinutes() != null) issue.setEstimateMinutes(req.estimateMinutes());
         if (req.requesterName() != null) issue.setRequesterName(req.requesterName().trim());
         if (req.requesterPhone() != null) issue.setRequesterPhone(req.requesterPhone().trim());
         if (req.requesterEmail() != null) issue.setRequesterEmail(req.requesterEmail().trim());
         if (req.receptionChannel() != null) issue.setReceptionChannel(req.receptionChannel().trim());
-        if (req.startDate() != null) {
-            issue.setStartDate(req.startDate().isBlank() ? null : LocalDate.parse(req.startDate()));
-        }
-        if (req.endDate() != null) {
-            issue.setEndDate(req.endDate().isBlank() ? null : LocalDate.parse(req.endDate()));
+        if (req.startDate() != null || req.endDate() != null) {
+            LocalDate start = req.startDate() == null ? issue.getStartDate() : parseOptionalIssueDate(req.startDate());
+            LocalDate end = req.endDate() == null ? issue.getEndDate() : parseOptionalIssueDate(req.endDate());
+            setPlannedDates(issue, currentUser, start, end);
+            issue.setGanttPinned(start != null);
         }
         if (req.issueType() != null) {
             String newType = req.issueType().isBlank() ? null : req.issueType().trim();
@@ -481,9 +573,10 @@ public class WorkService {
             issue.setObservations(req.observations().isBlank() ? null : req.observations().trim());
         }
 
+        configuration.saveFieldValues(issue, currentUser, req.customFields(), true);
         issue = issueRepository.save(issue);
 
-        if (req.columnId() != null && !oldColumn.equals(issue.getColumnId())) {
+        if (oldColumn != issue.getColumnId()) {
             notificationService.notifyStatusChange(issue, principal.userId(), oldColumn.name(), issue.getColumnId().name());
         }
         if (req.assigneeId() != null && issue.getAssignee() != null) {
@@ -497,8 +590,8 @@ public class WorkService {
     public WorkBootstrapDto.CardDto moveIssue(ScarPrincipal principal, UUID issueId, MoveIssueRequest req) {
         User user = userRepository.findByIdWithRoles(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
-        Issue issue = loadIssue(issueId);
-        permissionService.requireAccessProject(user, issue.getProject());
+        Issue issue = loadIssueForUpdate(issueId);
+        permissionService.requireMoveIssue(user, issue);
 
         IssueColumn oldColumn = issue.getColumnId();
         BoardList oldList = issue.getBoardList();
@@ -507,23 +600,31 @@ public class WorkService {
 
         boolean crossBoard = req.targetBoardId() != null && !req.targetBoardId().isBlank()
             && !issue.getProject().getId().toString().equals(req.targetBoardId());
+        boolean statusMove = req.expectedSourceColumn() != null;
+        if (statusMove) {
+            if (crossBoard || req.columnId() == null || req.columnId().isBlank()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Seleccione un estado del mismo proyecto");
+            }
+            if (oldColumn != parseIssueColumn(req.expectedSourceColumn())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "La incidencia ya cambió de estado");
+            }
+        }
 
         if (req.boardListId() != null && !req.boardListId().isBlank()) {
             UUID listProjectId = crossBoard
                 ? UUID.fromString(req.targetBoardId())
                 : issue.getProject().getId();
-            newList = boardListRepository.findByIdAndProjectId(
-                UUID.fromString(req.boardListId()),
-                listProjectId
-            ).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Lista no encontrada"));
-            newColumn = mapColumnFromList(newList);
+            newList = requireActiveIssueList(listProjectId, req.boardListId());
+            newColumn = newList.issueColumn();
+            if (statusMove && (newColumn == oldColumn || newColumn != parseIssueColumn(req.columnId()))) {
+                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "La lista no corresponde al estado destino");
+            }
         } else if (req.columnId() != null && !req.columnId().isBlank()) {
-            newColumn = IssueColumn.valueOf(req.columnId());
+            newColumn = parseIssueColumn(req.columnId());
+            newList = listForState(issue.getProject().getId(), newColumn);
         } else {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Debe indicar columna o lista destino");
         }
-
-        permissionService.requireMoveIssue(user, issue, newColumn);
 
         if (crossBoard) {
             UUID targetProjId = UUID.fromString(req.targetBoardId());
@@ -531,36 +632,17 @@ public class WorkService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Proyecto destino no encontrado"));
             permissionService.requireAccessProject(user, dest);
 
-            int nextNum = issueRepository.findTopByProjectIdOrderByIssueNumberDesc(dest.getId())
-                .map(i -> i.getIssueNumber() + 1).orElse(1);
-
             BoardList targetList = resolveBoardList(dest.getId(), req.boardListId(), newColumn);
             if (targetList != null) {
-                newList = targetList;
-                newColumn = mapColumnFromList(targetList);
+                newColumn = targetList.issueColumn();
             }
-
-            issue.setProject(dest);
-            issue.setIssueNumber(nextNum);
-            issue.setColumnId(newColumn);
-            issue.setBoardList(newList);
-            issue.setSortOrder(req.targetIndex() != null ? req.targetIndex()
-                : (newList != null
-                    ? nextIssueListOrder(dest.getId(), newList.getId())
-                    : nextIssueOrder(dest.getId(), newColumn)));
-            applyCompletionState(issue, oldColumn, newColumn, oldList, newList);
-            issue = issueRepository.save(issue);
-
-            if (!oldColumn.equals(newColumn)) {
-                activityLogService.log(issue, user, "column", oldColumn.name(), newColumn.name());
-                notificationService.notifyStatusChange(issue, principal.userId(), oldColumn.name(), newColumn.name());
-            }
-            return toCardLight(issue);
+            return toCardLight(transferIssue(issue, dest, targetList, newColumn, req.targetIndex(), user));
         }
 
+        configuration.requireTransition(issue.getProject().getId(), oldColumn, newColumn);
         issue.setColumnId(newColumn);
+        issue.setBoardList(newList);
         if (newList != null) {
-            issue.setBoardList(newList);
             issue.setSortOrder(req.targetIndex() != null ? req.targetIndex() : nextIssueListOrder(issue.getProject().getId(), newList.getId()));
         } else {
             issue.setSortOrder(req.targetIndex() != null ? req.targetIndex() : nextIssueOrder(issue.getProject().getId(), newColumn));
@@ -574,6 +656,89 @@ public class WorkService {
             notificationService.notifyStatusChange(issue, principal.userId(), oldColumn.name(), newColumn.name());
         }
         return toCardLight(issue);
+    }
+
+    @Transactional
+    public WorkBootstrapDto.CardDto assignIncomingIssue(
+        ScarPrincipal principal, UUID issueId, AssignIncomingIssueRequest req
+    ) {
+        User actor = userRepository.findByIdWithRoles(principal.userId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+        if (!permissionService.canAssignTasks(actor)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No puede asignar solicitudes");
+        }
+        Issue issue = loadIssueForUpdate(issueId);
+        permissionService.requireMoveIssue(actor, issue);
+        Project origin = issue.getProject();
+
+        // A repeated submission of the same completed assignment is safe.
+        if (origin.getId().equals(req.targetBoardId()) && issue.getAssignee() != null
+            && issue.getAssignee().getId().equals(req.assigneeId())) {
+            return toCardLight(issue);
+        }
+        if (origin.getType() != ProjectType.GENERAL
+            && !GeneralBoardService.GENERAL_BOARD_KEY.equalsIgnoreCase(origin.getKeyCode())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "La solicitud ya salió de la bandeja");
+        }
+        if (!EnumSet.of(IssueColumn.registered, IssueColumn.in_assignment, IssueColumn.todo).contains(issue.getColumnId())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "El estado actual no permite asignar esta solicitud");
+        }
+        Project dest = projectRepository.findById(req.targetBoardId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Tablero destino no encontrado"));
+        permissionService.requireAccessProject(actor, dest);
+        if (dest.getType() == ProjectType.GENERAL || GeneralBoardService.GENERAL_BOARD_KEY.equalsIgnoreCase(dest.getKeyCode())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Seleccione un tablero de trabajo");
+        }
+        User assignee = userRepository.findByIdWithRoles(req.assigneeId())
+            .filter(User::isActive)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Responsable activo no encontrado"));
+        permissionService.requireValidAssignee(actor, assignee);
+        if (!projectRepository.existsMember(dest.getId(), assignee.getId())) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "El responsable no pertenece al tablero destino");
+        }
+        List<BoardList> lists = boardListRepository.findByProjectIdAndArchivedFalseOrderBySortOrderAsc(dest.getId());
+        BoardList list = lists.stream().filter(candidate -> candidate.issueColumn() == IssueColumn.todo)
+            .findFirst().orElse(null);
+        if (!lists.isEmpty() && list == null) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "El tablero destino necesita una lista Por hacer");
+        }
+        User previous = issue.getAssignee();
+        issue.setAssignee(assignee);
+        issue.setAssignedAt(Instant.now());
+        Issue updated = transferIssue(issue, dest, list, IssueColumn.todo, null, actor);
+        activityLogService.log(updated, actor, "assignee", previous == null ? null : previous.getFullName(), assignee.getFullName());
+        notificationService.notifyAssignment(updated, actor.getId());
+        return toCardLight(updated);
+    }
+
+    private Issue transferIssue(
+        Issue issue, Project dest, BoardList list, IssueColumn column, Integer targetIndex, User actor
+    ) {
+        var oldColumn = issue.getColumnId();
+        var oldList = issue.getBoardList();
+        int nextNumber = nextIssueNumber(dest.getId());
+        issue.setProject(dest);
+        issue.setIssueNumber(nextNumber);
+        issue.setColumnId(column);
+        issue.setBoardList(list);
+        issue.setSortOrder(targetIndex != null ? targetIndex
+            : list != null ? nextIssueListOrder(dest.getId(), list.getId()) : nextIssueOrder(dest.getId(), column));
+        applyCompletionState(issue, oldColumn, column, oldList, list);
+        Issue saved = issueRepository.save(issue);
+        // Keep only the destination key in history so previous board membership stays private.
+        activityLogService.log(saved, actor, "transfer", null, dest.getKeyCode() + "-" + nextNumber);
+        if (oldColumn != column) {
+            activityLogService.log(saved, actor, "column", oldColumn.name(), column.name());
+            notificationService.notifyStatusChange(saved, actor.getId(), oldColumn.name(), column.name());
+        }
+        return saved;
+    }
+
+    private int nextIssueNumber(UUID projectId) {
+        projectRepository.findByIdForUpdate(projectId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Tablero no encontrado"));
+        return issueRepository.findTopByProjectIdOrderByIssueNumberDesc(projectId)
+            .map(issue -> issue.getIssueNumber() + 1).orElse(1);
     }
 
     @Transactional
@@ -617,19 +782,28 @@ public class WorkService {
     public WorkBootstrapDto.CommentDto addComment(ScarPrincipal principal, UUID issueId, CommentRequest req) {
         User author = userRepository.findByIdWithRoles(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
-        Issue issue = loadIssue(issueId);
-        permissionService.requireAccessProject(author, issue.getProject());
+        Issue issue = loadIssueForUpdate(issueId);
+        permissionService.requireReadIssue(author, issue);
+        if (req.publicReply() && (!issue.isPublicTrackingEnabled() || !permissionService.canAssignTasks(author))) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No puede publicar una respuesta en esta solicitud");
+        }
         IssueComment comment = new IssueComment();
         comment.setIssue(issue);
         comment.setAuthor(author);
         comment.setText(req.text().trim());
+        comment.setPublicReply(req.publicReply());
         comment = commentRepository.save(comment);
-        processMentions(issue, req.text(), author);
+        if (req.publicReply()) {
+            if (issue.getFirstPublicReplyAt() == null) issue.setFirstPublicReplyAt(comment.getCreatedAt());
+        } else {
+            processMentions(issue, req.text(), author);
+        }
         return new WorkBootstrapDto.CommentDto(
             comment.getId().toString(),
             author.getId().toString(),
             comment.getText(),
-            comment.getCreatedAt().toString()
+            comment.getCreatedAt().toString(),
+            comment.isPublicReply()
         );
     }
 
@@ -638,7 +812,7 @@ public class WorkService {
         User user = userRepository.findByIdWithRoles(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         Issue issue = loadIssue(issueId);
-        permissionService.requireAccessProject(user, issue.getProject());
+        permissionService.requireReadIssue(user, issue);
         TimeEntry entry = new TimeEntry();
         entry.setIssue(issue);
         entry.setUser(user);
@@ -686,7 +860,7 @@ public class WorkService {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         activeTimerRepository.findById(principal.userId()).ifPresent(activeTimerRepository::delete);
         Issue issue = loadIssue(UUID.fromString(req.issueId()));
-        permissionService.requireAccessProject(user, issue.getProject());
+        permissionService.requireReadIssue(user, issue);
         ActiveTimer timer = new ActiveTimer();
         timer.setUser(user);
         timer.setIssue(issue);
@@ -716,12 +890,11 @@ public class WorkService {
     public GanttDto ganttAll(ScarPrincipal principal) {
         User currentUser = userRepository.findByIdWithRoles(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
-        List<Project> projects = projectRepository.findAllWithMembers().stream()
-            .filter(project -> permissionService.canAccessProject(currentUser, project))
+        List<Project> projects = visibleProjects(currentUser).stream()
             .filter(project -> !isGeneralProject(project))
             .sorted(Comparator.comparing(Project::getName, String.CASE_INSENSITIVE_ORDER))
             .toList();
-        return buildHierarchicalGantt(projects, true);
+        return buildHierarchicalGantt(currentUser, projects, true);
     }
 
     @Transactional(readOnly = true)
@@ -731,28 +904,31 @@ public class WorkService {
         Project project = projectRepository.findById(projectId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         permissionService.requireAccessProject(currentUser, project);
-        return buildHierarchicalGantt(List.of(project), false);
+        return buildHierarchicalGantt(currentUser, List.of(project), false);
     }
 
-    private GanttDto buildHierarchicalGantt(List<Project> projects, boolean includeProjectSections) {
+    private GanttDto buildHierarchicalGantt(User currentUser, List<Project> projects, boolean includeProjectSections) {
         if (projects.isEmpty()) {
             LocalDate today = LocalDate.now();
             return new GanttDto(today.toString(), today.plusDays(7).toString(), "7d", true, List.of(), List.of());
         }
 
         Set<UUID> projectIds = projects.stream().map(Project::getId).collect(Collectors.toSet());
-        List<Issue> allIssues = issueRepository.findByProjectIdIn(projectIds);
+        List<Issue> allIssues = readableIssues(currentUser, issueRepository.findByProjectIdIn(projectIds));
+        Set<UUID> readableIds = allIssues.stream().map(Issue::getId).collect(Collectors.toSet());
         Map<UUID, List<Issue>> issuesByProject = allIssues.stream()
             .collect(Collectors.groupingBy(i -> i.getProject().getId()));
-        Map<UUID, List<Issue>> childrenByParent = allIssues.stream()
-            .filter(i -> i.getParentIssue() != null)
-            .collect(Collectors.groupingBy(i -> i.getParentIssue().getId()));
-
+        Map<UUID, List<BoardList>> listsByProject = boardListRepository.findByProjectIdInAndArchivedFalseOrderBySortOrderAsc(projectIds)
+            .stream().collect(Collectors.groupingBy(list -> list.getProject().getId()));
         List<GanttDto.GanttTaskDto> rows = new ArrayList<>();
         for (Project project : projects) {
             String projectSectionId = "section-project-" + project.getId();
             List<Issue> projectIssues = issuesByProject.getOrDefault(project.getId(), List.of());
             DateRange projectRange = dateRangeForIssues(projectIssues);
+            Set<UUID> issueIds = projectIssues.stream().map(Issue::getId).collect(Collectors.toSet());
+            Map<UUID, List<Issue>> childrenByParent = projectIssues.stream()
+                .filter(i -> i.getParentIssue() != null && issueIds.contains(i.getParentIssue().getId()))
+                .collect(Collectors.groupingBy(i -> i.getParentIssue().getId()));
 
             if (includeProjectSections) {
                 rows.add(sectionRow(
@@ -768,31 +944,29 @@ public class WorkService {
             }
 
             String listParentId = includeProjectSections ? projectSectionId : null;
-            List<BoardList> lists = boardListRepository.findByProjectIdAndArchivedFalseOrderBySortOrderAsc(project.getId());
+            List<BoardList> lists = listsByProject.getOrDefault(project.getId(), List.of());
             Map<UUID, List<Issue>> issuesByList = projectIssues.stream()
                 .filter(i -> i.getBoardList() != null)
                 .collect(Collectors.groupingBy(i -> i.getBoardList().getId()));
 
-            Set<UUID> issuesInLists = issuesByList.values().stream()
-                .flatMap(List::stream)
-                .map(Issue::getId)
-                .collect(Collectors.toSet());
+            Set<UUID> activeLists = lists.stream().map(BoardList::getId).collect(Collectors.toSet());
 
             for (BoardList list : lists) {
                 appendListSection(rows, project, list, issuesByList.getOrDefault(list.getId(), List.of()),
-                    listParentId, childrenByParent);
+                    listParentId, childrenByParent, issueIds, currentUser);
             }
 
             List<Issue> unlisted = projectIssues.stream()
-                .filter(i -> i.getBoardList() == null)
+                .filter(i -> i.getBoardList() == null || !activeLists.contains(i.getBoardList().getId()))
                 .toList();
             if (!unlisted.isEmpty()) {
-                appendListSection(rows, project, null, unlisted, listParentId, childrenByParent);
+                appendListSection(rows, project, null, unlisted, listParentId, childrenByParent, issueIds, currentUser);
             }
         }
 
         List<IssueDependency> deps = dependencyRepository.findByProjectIdIn(projectIds);
         List<GanttDto.GanttLinkDto> links = deps.stream()
+            .filter(dep -> readableIds.contains(dep.getIssue().getId()) && readableIds.contains(dep.getDependsOnIssue().getId()))
             .map(d -> new GanttDto.GanttLinkDto(
                 d.getId().toString(),
                 d.getDependsOnIssue().getId().toString(),
@@ -801,9 +975,9 @@ public class WorkService {
             ))
             .toList();
 
-        LocalDate minStart = allIssues.stream().map(this::resolveTaskStart).min(LocalDate::compareTo)
+        LocalDate minStart = allIssues.stream().map(Issue::getStartDate).filter(Objects::nonNull).min(LocalDate::compareTo)
             .orElse(LocalDate.now());
-        LocalDate maxEnd = allIssues.stream().map(this::resolveTaskEnd).max(LocalDate::compareTo)
+        LocalDate maxEnd = allIssues.stream().map(this::ganttEnd).filter(Objects::nonNull).max(LocalDate::compareTo)
             .orElse(minStart.plusDays(7));
 
         return new GanttDto(
@@ -822,11 +996,15 @@ public class WorkService {
         BoardList list,
         List<Issue> listIssues,
         String listParentId,
-        Map<UUID, List<Issue>> childrenByParent
+        Map<UUID, List<Issue>> childrenByParent,
+        Set<UUID> projectIssueIds,
+        User user
     ) {
-        if (listIssues.isEmpty()) {
-            return;
-        }
+        List<Issue> roots = listIssues.stream()
+            .filter(i -> i.getParentIssue() == null || !projectIssueIds.contains(i.getParentIssue().getId()))
+            .sorted(Comparator.comparingInt(Issue::getSortOrder).thenComparingInt(Issue::getIssueNumber))
+            .toList();
+        if (roots.isEmpty()) return;
         String listSectionId = list != null
             ? "section-list-" + list.getId()
             : "section-list-none-" + project.getId();
@@ -844,14 +1022,8 @@ public class WorkService {
             list != null ? list.getId().toString() : null
         ));
 
-        Set<UUID> listIssueIds = listIssues.stream().map(Issue::getId).collect(Collectors.toSet());
-        List<Issue> roots = listIssues.stream()
-            .filter(i -> i.getParentIssue() == null || !listIssueIds.contains(i.getParentIssue().getId()))
-            .sorted(Comparator.comparingInt(Issue::getSortOrder).thenComparingInt(Issue::getIssueNumber))
-            .toList();
-
         for (Issue root : roots) {
-            appendIssueTree(rows, root, listSectionId, project, childrenByParent);
+            appendIssueTree(rows, root, listSectionId, childrenByParent, user);
         }
     }
 
@@ -859,15 +1031,16 @@ public class WorkService {
         List<GanttDto.GanttTaskDto> rows,
         Issue issue,
         String parentId,
-        Project project,
-        Map<UUID, List<Issue>> childrenByParent
+        Map<UUID, List<Issue>> childrenByParent,
+        User user
     ) {
         List<Issue> children = childrenByParent.getOrDefault(issue.getId(), List.of()).stream()
             .sorted(Comparator.comparingInt(Issue::getSortOrder).thenComparingInt(Issue::getIssueNumber))
             .toList();
-        rows.add(toGanttTask(issue, project, !children.isEmpty(), parentId));
+        rows.add(ganttTask(issue, user, !children.isEmpty(), parentId, issue.getStartDate(), ganttEnd(issue),
+            issue.getEstimateMinutes(), issue.isGanttPinned()));
         for (Issue child : children) {
-            appendIssueTree(rows, child, issue.getId().toString(), project, childrenByParent);
+            appendIssueTree(rows, child, issue.getId().toString(), childrenByParent, user);
         }
     }
 
@@ -885,8 +1058,8 @@ public class WorkService {
             id,
             key,
             title,
-            range.start().toString(),
-            range.end().toString(),
+            dateText(range.start()),
+            dateText(range.end()),
             "backlog",
             null,
             0,
@@ -899,17 +1072,14 @@ public class WorkService {
             true,
             rowType,
             projectId,
-            boardListId
+            boardListId,
+            null, 0, null, false, false
         );
     }
 
     private DateRange dateRangeForIssues(List<Issue> issues) {
-        if (issues.isEmpty()) {
-            LocalDate today = LocalDate.now();
-            return new DateRange(today, today.plusDays(1));
-        }
-        LocalDate start = issues.stream().map(this::resolveTaskStart).min(LocalDate::compareTo).orElse(LocalDate.now());
-        LocalDate end = issues.stream().map(this::resolveTaskEnd).max(LocalDate::compareTo).orElse(start);
+        LocalDate start = issues.stream().map(Issue::getStartDate).filter(Objects::nonNull).min(LocalDate::compareTo).orElse(null);
+        LocalDate end = issues.stream().map(this::ganttEnd).filter(Objects::nonNull).max(LocalDate::compareTo).orElse(start);
         return new DateRange(start, end);
     }
 
@@ -917,48 +1087,36 @@ public class WorkService {
 
     @Transactional
     public GanttDto recalculateGantt(ScarPrincipal principal, UUID projectId) {
-        User currentUser = userRepository.findByIdWithRoles(principal.userId())
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+        User currentUser = requireGanttProjectRecalculation(principal, projectId);
+        List<UUID> ids = issueRepository.findByProjectId(projectId).stream().map(Issue::getId).toList();
+        List<Issue> issues = ids.isEmpty() ? List.of() : issueRepository.findAllForUpdate(ids);
+        List<IssueDependency> deps = dependencyRepository.findByProjectId(projectId);
+        LocalDate start = issues.stream().map(Issue::getStartDate).filter(Objects::nonNull)
+            .min(LocalDate::compareTo).orElse(LocalDate.now());
+        List<GanttScheduler.Task> tasks = issues.stream()
+            .sorted(Comparator.comparingInt(Issue::getSortOrder).thenComparingInt(Issue::getIssueNumber))
+            .map(issue -> ganttScheduleTask(issue, issue.getStartDate(), ganttEnd(issue), issue.getEstimateMinutes(), issue.isGanttPinned()))
+            .toList();
+        Map<UUID, GanttScheduler.Window> windows = scheduleGantt(tasks, deps, new GanttScheduler.Options(start, null, null, false));
+        for (Issue issue : issues) {
+            if (issue.isGanttPinned()) continue;
+            GanttScheduler.Window window = windows.get(issue.getId());
+            setPlannedDates(issue, currentUser, window.start(), window.end());
+        }
+        return gantt(principal, projectId);
+    }
+
+    @Transactional(readOnly = true)
+    public User requireGanttProjectRecalculation(ScarPrincipal principal, UUID projectId) {
+        User currentUser = userRepository.findByIdWithRoles(principal.userId()).filter(User::isActive)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN));
         Project project = projectRepository.findById(projectId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         permissionService.requireAccessProject(currentUser, project);
-
-        List<Issue> issues = issueRepository.findByProjectId(projectId);
-        List<IssueDependency> deps = dependencyRepository.findByProjectId(projectId);
-        Map<UUID, Issue> byId = issues.stream().collect(Collectors.toMap(Issue::getId, i -> i));
-
-        boolean changed;
-        int guard = 0;
-        do {
-            changed = false;
-            for (IssueDependency dep : deps) {
-                Issue successor = byId.get(dep.getIssue().getId());
-                Issue predecessor = byId.get(dep.getDependsOnIssue().getId());
-                if (successor == null || predecessor == null) {
-                    continue;
-                }
-                LocalDate predStart = resolveTaskStart(predecessor);
-                LocalDate predEnd = resolveTaskEnd(predecessor);
-                LocalDate succStart = resolveTaskStart(successor);
-                LocalDate succEnd = resolveTaskEnd(successor);
-                long durationDays = Math.max(1, java.time.temporal.ChronoUnit.DAYS.between(succStart, succEnd));
-
-                LocalDate nextStart = switch (dep.getDependencyType()) {
-                    case START_TO_START -> predStart;
-                    case FINISH_TO_START -> predEnd.plusDays(1);
-                };
-                if (nextStart.isAfter(succStart)) {
-                    successor.setStartDate(nextStart);
-                    successor.setEndDate(nextStart.plusDays(durationDays));
-                    successor.setDueDate(successor.getEndDate());
-                    changed = true;
-                }
-            }
-            guard++;
-        } while (changed && guard < 50);
-
-        issueRepository.saveAll(issues);
-        return gantt(principal, projectId);
+        if (!permissionService.isAdminOrChief(currentUser)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Solo administración o jefatura pueden recalcular el plan");
+        }
+        return currentUser;
     }
 
     @Transactional(readOnly = true)
@@ -970,22 +1128,17 @@ public class WorkService {
         User currentUser = userRepository.findByIdWithRoles(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
 
-        Set<UUID> projectIds = projectRepository.findAllWithMembers().stream()
-            .filter(project -> permissionService.canAccessProject(currentUser, project))
+        Map<UUID, Project> projectsById = visibleProjects(currentUser).stream()
             .filter(project -> projectId == null || project.getId().equals(projectId))
             .filter(project -> !groupedByProject || !isGeneralProject(project))
-            .map(Project::getId)
-            .collect(Collectors.toSet());
-
-        Map<UUID, Project> projectsById = projectRepository.findAllWithMembers().stream()
-            .filter(project -> projectIds.contains(project.getId()))
             .collect(Collectors.toMap(Project::getId, project -> project, (a, b) -> a));
+        Set<UUID> projectIds = projectsById.keySet();
 
         if (projectIds.isEmpty()) {
             return new WeeklyPlanDto(weekStart.toString(), weekEnd.toString(), groupedByProject, List.of());
         }
 
-        List<Issue> issues = issueRepository.findByProjectIdIn(projectIds).stream()
+        List<Issue> issues = readableIssues(currentUser, issueRepository.findByProjectIdIn(projectIds)).stream()
             .filter(issue -> overlapsWeek(issue, weekStart, weekEnd))
             .sorted(Comparator
                 .comparing((Issue i) -> i.getProject().getName(), String.CASE_INSENSITIVE_ORDER)
@@ -1021,7 +1174,8 @@ public class WorkService {
                     issue.getIssueType() != null ? issue.getIssueType() : "",
                     issue.getObservations() != null && !issue.getObservations().isBlank()
                         ? issue.getObservations()
-                        : (issue.getDescription() != null ? issue.getDescription() : "")
+                        : (issue.getDescription() != null ? issue.getDescription() : ""),
+                    issue.getId().toString()
                 ));
             }
             groups.add(new WeeklyPlanDto.WeeklyPlanGroupDto(entry.getKey(), rows));
@@ -1042,6 +1196,31 @@ public class WorkService {
         return weeklyPlanExcelService.export(plan);
     }
 
+    public record WeeklyExport(byte[] bytes, List<UUID> issueIds) {}
+
+    @Transactional(readOnly = true)
+    public WeeklyExport prepareWeeklyExport(ScarPrincipal principal, UUID projectId, String weekStart) {
+        requireWeeklyExportAccess(principal, projectId, List.of());
+        WeeklyPlanDto plan = getWeeklyPlan(principal, projectId, weekStart);
+        List<UUID> visible = plan.groups().stream().flatMap(group -> group.rows().stream())
+            .map(row -> UUID.fromString(row.issueId())).distinct().toList();
+        return new WeeklyExport(weeklyPlanExcelService.export(plan), visible);
+    }
+
+    @Transactional(readOnly = true)
+    public void requireWeeklyExportAccess(ScarPrincipal principal, UUID projectId, List<UUID> issueIds) {
+        User user = userRepository.findByIdWithRoles(principal.userId()).filter(User::isActive)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN));
+        Set<UUID> projects = visibleProjectIds(user);
+        if (projectId != null && !projects.contains(projectId)) throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        if (issueIds.isEmpty()) return;
+        List<Issue> issues = issueRepository.findAllById(issueIds);
+        if (issues.size() != issueIds.size() || issues.stream().anyMatch(issue ->
+            !projects.contains(issue.getProject().getId()) || !permissionService.canReadProjectIssue(user, issue))) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Vuelve a generar el archivo con tus permisos vigentes");
+        }
+    }
+
     public String weeklyPlanFileName(String weekStartParam) {
         return weeklyPlanExcelService.fileName(parseWeekStart(weekStartParam));
     }
@@ -1050,18 +1229,70 @@ public class WorkService {
     public GanttDto.GanttTaskDto updateGanttTaskDates(ScarPrincipal principal, UUID issueId, GanttTaskUpdateRequest req) {
         User currentUser = userRepository.findByIdWithRoles(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
-        Issue issue = loadIssue(issueId);
-        permissionService.requireAccessProject(currentUser, issue.getProject());
-        LocalDate start = LocalDate.parse(req.start());
-        LocalDate end = LocalDate.parse(req.end());
-        if (end.isBefore(start)) {
+        Issue issue = loadIssueForUpdate(issueId);
+        permissionService.requireReadIssue(currentUser, issue);
+        permissionService.requireUpdateIssue(currentUser, issue, null);
+        LocalDate start = req.start() == null ? null : parseOptionalIssueDate(req.start());
+        LocalDate end = req.end() == null ? null : parseOptionalIssueDate(req.end());
+        boolean pinned = start != null && !Boolean.FALSE.equals(req.pinned());
+        applyGanttSchedule(issue, currentUser, start, end,
+            req.updateEstimate() ? req.estimateMinutes() : issue.getEstimateMinutes(), pinned);
+        return ganttTask(issue, currentUser, false, null, start, ganttEnd(issue), issue.getEstimateMinutes(), pinned);
+    }
+
+    void applyGanttSchedule(Issue issue, User actor, LocalDate start, LocalDate end, Integer estimate, boolean pinned) {
+        validateGanttDates(start, end);
+        setPlannedDates(issue, actor, start, end);
+        activityLogService.log(issue, actor, "estimate", Objects.toString(issue.getEstimateMinutes(), null), Objects.toString(estimate, null));
+        issue.setEstimateMinutes(estimate);
+        issue.setGanttPinned(start != null && pinned);
+    }
+
+    static void validateGanttDates(LocalDate start, LocalDate end) {
+        if ((start == null) != (end == null)
+            || (start != null && (start.getYear() < 1900 || end.getYear() > 2200 || end.isBefore(start)
+                || java.time.temporal.ChronoUnit.DAYS.between(start, end) > GanttScheduler.MAX_PLAN_DAYS))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Indique un intervalo válido o deje ambas fechas vacías");
+        }
+    }
+
+    GanttScheduler.Task ganttScheduleTask(Issue issue, LocalDate start, LocalDate end, Integer estimate, boolean pinned) {
+        return new GanttScheduler.Task(issue.getId(), issue.getAssignee() == null ? null : issue.getAssignee().getId(),
+            start, end, estimate, issue.getTrackedMinutes(), issue.getColumnId() == IssueColumn.done || issue.getColumnId() == IssueColumn.closed, pinned);
+    }
+
+    Map<UUID, GanttScheduler.Window> scheduleGantt(List<GanttScheduler.Task> tasks, List<IssueDependency> dependencies,
+        GanttScheduler.Options options) {
+        try {
+            return GanttScheduler.schedule(tasks, dependencies.stream().map(link -> new GanttScheduler.Edge(
+                link.getDependsOnIssue().getId(), link.getIssue().getId(), link.getDependencyType())).toList(), options);
+        } catch (IllegalArgumentException error) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, error.getMessage());
+        }
+    }
+
+    private void setPlannedDates(Issue issue, User actor, LocalDate start, LocalDate end) {
+        if (start != null && end != null && end.isBefore(start)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La fecha final no puede ser anterior al inicio");
         }
+        activityLogService.log(issue, actor, "planned_dates",
+            describePlan(issue.getStartDate(), issue.getEndDate()), describePlan(start, end));
         issue.setStartDate(start);
         issue.setEndDate(end);
-        issue.setDueDate(end);
-        issue = issueRepository.save(issue);
-        return toGanttTask(issue, issue.getProject(), issueRepository.findByParentIssueId(issue.getId()).size() > 0, null);
+    }
+
+    private String describePlan(LocalDate start, LocalDate end) {
+        if (start == null && end == null) return null;
+        return (start == null ? "Sin inicio" : start.toString()) + " → " + (end == null ? "Sin fin" : end.toString());
+    }
+
+    private LocalDate parseOptionalIssueDate(String value) {
+        if (value.isBlank()) return null;
+        try {
+            return LocalDate.parse(value);
+        } catch (DateTimeParseException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Ingrese una fecha válida");
+        }
     }
 
     @Transactional
@@ -1069,17 +1300,36 @@ public class WorkService {
         User currentUser = userRepository.findByIdWithRoles(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         Issue issue = loadIssue(issueId);
-        permissionService.requireAccessProject(currentUser, issue.getProject());
+        permissionService.requireReadIssue(currentUser, issue);
+        permissionService.requireUpdateIssue(currentUser, issue, null);
         Issue dependsOn = loadIssue(UUID.fromString(req.dependsOnIssueId()));
-        permissionService.requireAccessProject(currentUser, dependsOn.getProject());
+        permissionService.requireReadIssue(currentUser, dependsOn);
         if (!issue.getProject().getId().equals(dependsOn.getProject().getId())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Las dependencias deben ser del mismo proyecto");
+        }
+        if (issue.getId().equals(dependsOn.getId())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Una incidencia no puede depender de sí misma");
+        }
+        UUID projectId = issue.getProject().getId();
+        projectRepository.findByIdForUpdate(projectId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Tablero no encontrado"));
+        List<IssueDependency> dependencies = dependencyRepository.findByProjectId(projectId);
+        boolean exists = dependencies.stream().anyMatch(link ->
+            link.getIssue().getId().equals(issueId) && link.getDependsOnIssue().getId().equals(dependsOn.getId()));
+        if (exists) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "La dependencia ya está registrada");
+        }
+        if (dependencyPathExists(issueId, dependsOn.getId(), dependencies)) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "La dependencia crearía un ciclo");
         }
         IssueDependency dep = new IssueDependency();
         dep.setIssue(issue);
         dep.setDependsOnIssue(dependsOn);
-        if (req.dependencyType() != null) {
-            dep.setDependencyType(DependencyType.valueOf(req.dependencyType().trim().toUpperCase(Locale.ROOT)));
+        try {
+            dep.setDependencyType(req.dependencyType() == null ? DependencyType.FINISH_TO_START
+                : DependencyType.valueOf(req.dependencyType().trim().toUpperCase(Locale.ROOT)));
+        } catch (IllegalArgumentException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tipo de dependencia no válido");
         }
         dep = dependencyRepository.save(dep);
         return new GanttDto.GanttLinkDto(
@@ -1090,13 +1340,32 @@ public class WorkService {
         );
     }
 
+    private boolean dependencyPathExists(UUID from, UUID to, List<IssueDependency> dependencies) {
+        Map<UUID, List<UUID>> successors = new HashMap<>();
+        for (IssueDependency link : dependencies) {
+            successors.computeIfAbsent(link.getDependsOnIssue().getId(), key -> new ArrayList<>())
+                .add(link.getIssue().getId());
+        }
+        Set<UUID> seen = new HashSet<>();
+        Deque<UUID> pending = new ArrayDeque<>();
+        pending.add(from);
+        while (!pending.isEmpty()) {
+            UUID step = pending.removeFirst();
+            if (step.equals(to)) return true;
+            if (seen.add(step)) pending.addAll(successors.getOrDefault(step, List.of()));
+        }
+        return false;
+    }
+
     @Transactional
     public void removeDependency(ScarPrincipal principal, UUID dependencyId) {
         User currentUser = userRepository.findByIdWithRoles(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         IssueDependency dep = dependencyRepository.findById(dependencyId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
-        permissionService.requireAccessProject(currentUser, dep.getIssue().getProject());
+        permissionService.requireReadIssue(currentUser, dep.getIssue());
+        permissionService.requireReadIssue(currentUser, dep.getDependsOnIssue());
+        permissionService.requireUpdateIssue(currentUser, dep.getIssue(), null);
         dependencyRepository.delete(dep);
     }
 
@@ -1104,10 +1373,7 @@ public class WorkService {
     public ReportsDto getReports(ScarPrincipal principal, UUID projectId, String startDate, String endDate) {
         User currentUser = userRepository.findByIdWithRoles(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
-        Set<UUID> accessibleProjectIds = projectRepository.findAllWithMembers().stream()
-            .filter(project -> permissionService.canAccessProject(currentUser, project))
-            .map(Project::getId)
-            .collect(Collectors.toSet());
+        Set<UUID> accessibleProjectIds = visibleProjectIds(currentUser);
 
         LocalDate start = parseReportDate(startDate);
         LocalDate end = parseReportDate(endDate);
@@ -1122,7 +1388,7 @@ public class WorkService {
         } else {
             issues = issueRepository.findByProjectIdIn(accessibleProjectIds);
         }
-        issues = issues.stream()
+        issues = readableIssues(currentUser, issues).stream()
             .filter(issue -> issueMatchesReportRange(issue, start, end))
             .toList();
 
@@ -1138,6 +1404,7 @@ public class WorkService {
         List<TimeEntry> entries = reportProjectIds.isEmpty()
             ? List.of()
             : timeEntryRepository.findByProjectIdIn(reportProjectIds).stream()
+                .filter(entry -> permissionService.canReadProjectIssue(currentUser, entry.getIssue()))
                 .filter(entry -> timeEntryMatchesReportRange(entry, start, end))
                 .toList();
 
@@ -1193,16 +1460,27 @@ public class WorkService {
     }
 
     @Transactional(readOnly = true)
-    public WorkBootstrapDto.CardDto getPublicTracking(String token) {
+    public HelpdeskDto.Tracking getPublicTracking(String token) {
         UUID publicToken;
         try {
             publicToken = UUID.fromString(token);
         } catch (IllegalArgumentException ex) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Ticket no encontrado");
         }
-        Issue issue = issueRepository.findByPublicToken(publicToken)
+        Issue issue = issueRepository.findByPublicTokenAndPublicTrackingEnabledTrue(publicToken)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Ticket no encontrado"));
-        return toPublicCard(issue);
+        List<HelpdeskDto.PublicReply> replies = commentRepository.findByIssueIdAndPublicReplyTrueOrderByCreatedAtAsc(issue.getId())
+            .stream().map(comment -> new HelpdeskDto.PublicReply(comment.getText(), comment.getCreatedAt())).toList();
+        String status = switch (issue.getColumnId()) {
+            case registered, backlog -> "registered";
+            case in_assignment, todo, in_progress, review -> "in_progress";
+            case done, closed -> "closed";
+        };
+        return new HelpdeskDto.Tracking(publicReference(issue), status, issue.getCreatedAt(), replies);
+    }
+
+    private String publicReference(Issue issue) {
+        return "SOL-" + issue.getId().toString().substring(0, 12).replace("-", "").toUpperCase(Locale.ROOT);
     }
 
     @Transactional
@@ -1302,6 +1580,7 @@ public class WorkService {
         while (matcher.find()) {
             String username = matcher.group(1);
             userRepository.findByUsername(username)
+                .filter(user -> user.isActive() && permissionService.canReadIssue(user, issue))
                 .ifPresent(user -> notificationService.notifyMention(issue, user, author));
         }
     }
@@ -1374,50 +1653,13 @@ public class WorkService {
                 .findFirst());
     }
 
-    private IssueColumn mapColumnFromList(BoardList list) {
-        if (isDoneList(list)) {
-            return IssueColumn.done;
-        }
-        String name = list.getName().toLowerCase(Locale.ROOT);
-        if (name.contains("progreso") || name.contains("curso") || name.contains("proceso")) {
-            return IssueColumn.in_progress;
-        }
-        if (name.contains("revis")) {
-            return IssueColumn.review;
-        }
-        if (name.contains("pendient")) {
-            return IssueColumn.todo;
-        }
-        if (name.contains("asign")) {
-            return IssueColumn.in_assignment;
-        }
-        if (name.contains("tarea")) {
-            return IssueColumn.todo;
-        }
-        if (name.contains("registr")) {
-            return IssueColumn.registered;
-        }
-        return IssueColumn.todo;
+    private BoardList listForState(UUID projectId, IssueColumn status) {
+        return boardListRepository.findByProjectIdAndArchivedFalseOrderBySortOrderAsc(projectId)
+            .stream().filter(list -> list.issueColumn() == status).findFirst().orElse(null);
     }
 
     private boolean isDoneList(BoardList list) {
-        if (list == null) {
-            return false;
-        }
-        String name = list.getName().toLowerCase(Locale.ROOT);
-        return name.contains("hecho") || name.contains("cerrad") || name.contains("finaliz")
-            || name.contains("archivad") || name.contains("completad");
-    }
-
-    private void applyCompletionFromList(Issue issue, BoardList list, IssueColumn oldColumn) {
-        if (isDoneList(list)) {
-            if (issue.getCompletedAt() == null) {
-                issue.setCompletedAt(Instant.now());
-            }
-            issue.setColumnId(IssueColumn.done);
-        } else if (oldColumn == IssueColumn.done || oldColumn == IssueColumn.closed) {
-            issue.setCompletedAt(null);
-        }
+        return list != null && list.issueColumn() == IssueColumn.done;
     }
 
     private void applyCompletionState(
@@ -1436,16 +1678,32 @@ public class WorkService {
         }
     }
 
-    private BoardListDto toBoardListDto(BoardList list) {
-        return new BoardListDto(
-            list.getId(),
-            list.getProject().getId(),
-            list.getName(),
-            list.getSortOrder(),
-            list.isArchived(),
-            list.getCreatedAt(),
-            list.getUpdatedAt()
-        );
+    private BoardList requireActiveIssueList(UUID projectId, String id) {
+        UUID listId;
+        try {
+            listId = UUID.fromString(id);
+        } catch (IllegalArgumentException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Lista no válida");
+        }
+        BoardList list = boardListRepository.findByIdAndProjectId(listId, projectId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Lista no encontrada"));
+        if (list.isArchived()) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "La lista destino está archivada");
+        }
+        return list;
+    }
+
+    private IssueColumn parseIssueColumn(String column) {
+        try {
+            return IssueColumn.valueOf(column == null ? "" : column);
+        } catch (IllegalArgumentException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Estado de incidencia no válido");
+        }
+    }
+
+    private Issue loadIssueForUpdate(UUID id) {
+        return issueRepository.findByIdForUpdate(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Incidencia no encontrada"));
     }
 
     private Issue loadIssue(UUID id) {
@@ -1462,12 +1720,25 @@ public class WorkService {
             .collect(Collectors.groupingBy(comment -> comment.getIssue().getId()));
     }
 
+    private List<Issue> readableIssues(User user, List<Issue> issues) {
+        return issues.stream().filter(issue -> permissionService.canReadProjectIssue(user, issue)).toList();
+    }
+
+    private List<Project> visibleProjects(User user) {
+        return projectRepository.findVisibleWithMembers(user.getId(), permissionService.isAdminOrChief(user));
+    }
+
+    private Set<UUID> visibleProjectIds(User user) {
+        return new HashSet<>(projectRepository.findVisibleIds(user.getId(), permissionService.isAdminOrChief(user)));
+    }
+
     private List<WorkBootstrapDto.CommentDto> mapComments(List<IssueComment> comments) {
         return comments.stream().map(c -> new WorkBootstrapDto.CommentDto(
             c.getId().toString(),
             c.getAuthor().getId().toString(),
             c.getText(),
-            c.getCreatedAt().toString()
+            c.getCreatedAt().toString(),
+            c.isPublicReply()
         )).toList();
     }
 
@@ -1519,23 +1790,23 @@ public class WorkService {
         );
     }
 
-    private GanttDto.GanttTaskDto toGanttTask(Issue issue, Project project, boolean hasChildren, String parentId) {
-        LocalDate start = resolveTaskStart(issue);
-        LocalDate end = resolveTaskEnd(issue);
+    GanttDto.GanttTaskDto ganttTask(Issue issue, User user, boolean hasChildren, String parentId,
+        LocalDate start, LocalDate end, Integer estimate, boolean pinned) {
+        Project project = issue.getProject();
         int progress = issue.getColumnId() == IssueColumn.done || issue.getColumnId() == IssueColumn.closed ? 100
-            : issue.getColumnId() == IssueColumn.in_progress || issue.getColumnId() == IssueColumn.review ? 50 : 0;
+            : estimate == null || estimate <= 0 ? 0 : (int) Math.min(100, issue.getTrackedMinutes() * 100L / estimate);
         String boardListId = issue.getBoardList() != null ? issue.getBoardList().getId().toString() : null;
         return new GanttDto.GanttTaskDto(
             issue.getId().toString(),
             project.getKeyCode() + "-" + issue.getIssueNumber(),
             issue.getTitle(),
-            start.toString(),
-            end.toString(),
+            dateText(start),
+            dateText(end),
             issue.getColumnId().name(),
             issue.getAssignee() != null ? issue.getAssignee().getFullName() : null,
             progress,
             parentId,
-            issue.getEstimateMinutes(),
+            estimate,
             issue.getPriority().name(),
             issue.getIssueType() != null ? issue.getIssueType() : "",
             project.getName(),
@@ -1543,8 +1814,24 @@ public class WorkService {
             hasChildren,
             "TASK",
             project.getId().toString(),
-            boardListId
+            boardListId,
+            issue.getAssignee() == null ? null : issue.getAssignee().getId().toString(),
+            issue.getTrackedMinutes(),
+            dateText(issue.getDueDate()),
+            pinned,
+            permissionService.canMoveAccessibleIssue(user, issue)
         );
+    }
+
+    LocalDate ganttEnd(Issue issue) {
+        LocalDate start = issue.getStartDate();
+        if (start == null) return null;
+        LocalDate end = issue.getEndDate();
+        return end != null && !end.isBefore(start) ? end : GanttScheduler.endDate(start, GanttScheduler.estimatedDays(issue.getEstimateMinutes()), false);
+    }
+
+    private String dateText(LocalDate date) {
+        return date == null ? null : date.toString();
     }
 
     private LocalDate resolveTaskStart(Issue issue) {
@@ -1601,11 +1888,6 @@ public class WorkService {
                 .collect(Collectors.joining(", "));
         }
         return "Sin asignar";
-    }
-
-    private String publicTokenValue(Issue issue) {
-        UUID token = issue.getPublicToken();
-        return token != null ? token.toString() : null;
     }
 
     private LocalDate clampToBusinessDay(LocalDate date) {
@@ -1685,47 +1967,15 @@ public class WorkService {
             i.getRequesterPhone(),
             i.getRequesterEmail(),
             i.getReceptionChannel(),
-            publicTokenValue(i),
-            i.getStartDate() != null ? i.getStartDate().toString() : null,
-            i.getEndDate() != null ? i.getEndDate().toString() : null,
-            issueTypeValue(i),
-            i.getObservations(),
-            List.of()
-        );
-    }
-
-    private WorkBootstrapDto.CardDto toPublicCard(Issue i) {
-        return new WorkBootstrapDto.CardDto(
-            i.getId().toString(),
-            i.getProject().getId().toString(),
-            i.getBoardList() != null ? i.getBoardList().getId().toString() : null,
-            null,
-            i.getIssueNumber(),
-            i.getColumnId().name(),
-            i.getTitle(),
-            i.getDescription(),
-            i.getPriority().name(),
-            null,
-            i.getDueDate() != null ? i.getDueDate().toString() : null,
-            i.getEstimateMinutes(),
-            i.getTrackedMinutes(),
-            List.of(),
-            List.of(),
-            i.getSortOrder(),
-            i.getCreatedAt().toString(),
-            i.getUpdatedAt().toString(),
-            i.getAssignedAt() != null ? i.getAssignedAt().toString() : null,
-            i.getCompletedAt() != null ? i.getCompletedAt().toString() : null,
-            null,
-            null,
-            null,
-            null,
             null,
             i.getStartDate() != null ? i.getStartDate().toString() : null,
             i.getEndDate() != null ? i.getEndDate().toString() : null,
             issueTypeValue(i),
             i.getObservations(),
-            List.of()
+            List.of(),
+            i.isHelpdeskRequest(),
+            i.isPublicTrackingEnabled(),
+            helpdeskSla.forIssue(i)
         );
     }
 
@@ -1755,12 +2005,15 @@ public class WorkService {
             i.getRequesterPhone(),
             i.getRequesterEmail(),
             i.getReceptionChannel(),
-            publicTokenValue(i),
+            null,
             i.getStartDate() != null ? i.getStartDate().toString() : null,
             i.getEndDate() != null ? i.getEndDate().toString() : null,
             issueTypeValue(i),
             i.getObservations(),
-            List.of()
+            List.of(),
+            i.isHelpdeskRequest(),
+            i.isPublicTrackingEnabled(),
+            helpdeskSla.forIssue(i)
         );
     }
 
@@ -1791,12 +2044,15 @@ public class WorkService {
             i.getRequesterPhone(),
             i.getRequesterEmail(),
             i.getReceptionChannel(),
-            publicTokenValue(i),
+            null,
             i.getStartDate() != null ? i.getStartDate().toString() : null,
             i.getEndDate() != null ? i.getEndDate().toString() : null,
             issueTypeValue(i),
             i.getObservations(),
-            mapAttachments(attachmentRepository.findByIssueIdOrderByCreatedAtDesc(issueId))
+            mapAttachments(attachmentRepository.findByIssueIdOrderByCreatedAtDesc(issueId)),
+            i.isHelpdeskRequest(),
+            i.isPublicTrackingEnabled(),
+            helpdeskSla.forIssue(i)
         );
     }
 }

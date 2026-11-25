@@ -1,28 +1,46 @@
+@if (fullPage()) {
+  @if (visible()) {
+    <div class="work-full-issue rounded-xl border border-surface-200 bg-surface-0" aria-label="Contenido de la incidencia">
+      <ng-container *ngTemplateOutlet="issueContent" />
+    </div>
+  }
+} @else {
 <p-dialog
   [visible]="visible()"
   (visibleChange)="$event ? visible.set(true) : close()"
+  (onHide)="restoreFocus()"
   [modal]="true"
-  [dismissableMask]="true"
+  [dismissableMask]="false"
+  [closeOnEscape]="!hasUnsavedChanges() && !commentText().trim() && !saving()"
   [draggable]="false"
   [resizable]="false"
   [showHeader]="false"
+  [pt]="{root: {'aria-label': 'Ficha de incidencia', 'aria-labelledby': null}}"
   [style]="{ width: 'min(96vw, 72rem)', maxHeight: '92vh' }"
   contentStyleClass="work-card-modal-content p-0"
   styleClass="work-card-modal"
 >
+  <ng-container *ngTemplateOutlet="issueContent" />
+</p-dialog>
+}
+
+<ng-template #issueContent>
   @if (card(); as c) {
-    <div class="work-card-modal-shell">
+    <div class="work-card-modal-shell" (keydown.escape)="onDetailEscape($event)">
       <header class="work-card-modal-header">
         <div class="flex items-center gap-2 min-w-0 flex-1">
           @if (isDraftCard()) {
             <p-tag value="Nueva" severity="info" />
           }
-          <p-tag [value]="listName()" severity="secondary" />
-          @if (!isDraftCard()) {
+          <p-tag [value]="statusLabel(c.columnId)" severity="secondary" />
+          @if (!isDraftCard() && !fullPage()) {
             <span class="text-sm text-surface-500 font-mono truncate">{{ workService.getIssueKey(c) }}</span>
           }
           @if (board(); as b) {
-            <span class="text-sm text-surface-400 truncate hidden sm:inline">· {{ boardDisplayName(b) }}</span>
+            <a class="text-sm text-primary-800 truncate hidden sm:inline hover:underline"
+              [routerLink]="hasUnsavedChanges() || commentText().trim() ? null : ['/work/projects', b.id]">
+              {{ boardDisplayName(b) }}
+            </a>
           }
           @if (!isDraftCard() && hasUnsavedChanges()) {
             <span class="text-xs text-amber-600 font-medium hidden sm:inline">· Sin guardar</span>
@@ -37,7 +55,7 @@
             [rounded]="!canSave()"
             [text]="!canSave()"
             [outlined]="canSave()"
-            [aria-label]="isDraftCard() ? 'Crear tarjeta' : 'Guardar cambios'"
+            [ariaLabel]="isDraftCard() ? 'Crear incidencia' : 'Guardar cambios'"
             (onClick)="saveAll()"
             [loading]="saving()"
             [disabled]="!canSave() || saving()"
@@ -52,26 +70,36 @@
               (onClick)="openDeleteDialog()"
             />
           }
-          <p-button icon="pi pi-times" text rounded severity="secondary" (onClick)="close()" />
+          @if (!fullPage() && !isDraftCard()) {
+            <p-button icon="pi pi-external-link" text rounded severity="secondary" ariaLabel="Abrir página de incidencia"
+              [disabled]="hasUnsavedChanges() || !!commentText().trim() || saving()"
+              [routerLink]="['/work/issues', c.id]" [queryParams]="openPageParams()" />
+          }
+          <p-button [icon]="fullPage() ? 'pi pi-arrow-left' : 'pi pi-times'" text rounded severity="secondary"
+            [ariaLabel]="fullPage() ? 'Volver de la incidencia' : 'Cerrar ficha'" (onClick)="close()" />
         </div>
       </header>
 
       @if (saveError(); as saveErr) {
-        <p class="text-sm text-red-600 m-0 px-5 py-2 border-b border-surface-200 bg-red-50">{{ saveErr }}</p>
+        <p role="alert" class="text-sm text-red-700 m-0 px-5 py-2 border-b border-surface-200 bg-red-50">{{ saveErr }}</p>
       }
 
       <div class="work-card-modal-body">
         <section class="work-card-modal-main">
-          <textarea
-            pTextarea
-            rows="2"
-            class="work-card-modal-title w-full"
-            [ngModel]="titleDraft()"
-            (ngModelChange)="titleDraft.set($event)"
-            placeholder="Título de la tarjeta"
-          ></textarea>
+          @if (fullPage()) {
+            <h1 id="standalone-issue-title" class="m-0 break-words text-2xl font-semibold text-surface-950" [class.sr-only]="editingText()">{{ c.title }}</h1>
+          }
+          @if (!fullPage() || editingText()) {
+            <app-work-writing-field inputId="drawer-issue-title" label="Título de la incidencia" [rows]="2"
+              fieldClass="work-card-modal-title" [(value)]="titleDraft" [disabled]="readonlyIssue() || saving()" placeholder="Título de la incidencia" />
+          }
 
           <div class="work-card-modal-toolbar">
+            @if (fullPage() && cardDetail().canEdit) {
+              <p-button [label]="editingText() ? 'Cancelar edición' : 'Editar texto'" [ariaLabel]="editingText() ? 'Cancelar edición de texto' : 'Editar texto'"
+                icon="pi pi-pencil" size="small" severity="secondary" [outlined]="true" [disabled]="saving()"
+                (onClick)="toggleTextEditor()" />
+            }
             @if (cardId(); as id) {
               <p-button
                 label="Mover"
@@ -79,6 +107,7 @@
                 size="small"
                 severity="secondary"
                 [outlined]="true"
+                [disabled]="readonlyIssue()"
                 (onClick)="openMoveDialog()"
               />
               <p-button
@@ -89,6 +118,9 @@
                 [outlined]="true"
                 (onClick)="showTimePanel.set(!showTimePanel())"
               />
+              <p-button label="Guías del proyecto" icon="pi pi-book" size="small" severity="secondary"
+                ariaLabel="Guías del proyecto" [text]="true" [disabled]="hasUnsavedChanges() || !!commentText().trim()"
+                routerLink="/work/knowledge" [queryParams]="{board: c.boardId}" />
             }
           </div>
 
@@ -99,17 +131,28 @@
           <div class="work-card-modal-section">
             <div class="work-card-modal-section-title">
               <i class="pi pi-align-left"></i>
-              <span>Descripción</span>
+              @if (!fullPage() || editingText()) {
+                <label for="drawer-issue-description">Descripción</label>
+              } @else {
+                <h2 class="m-0 text-sm font-semibold">Descripción</h2>
+              }
             </div>
-            <textarea
-              pTextarea
-              rows="6"
-              class="w-full work-card-modal-description"
-              [ngModel]="descriptionDraft()"
-              (ngModelChange)="descriptionDraft.set($event)"
-              placeholder="Añade una descripción más detallada…"
-            ></textarea>
+            @if (!fullPage() || editingText()) {
+              <app-work-writing-field inputId="drawer-issue-description" label="Descripción" [rows]="6" [maxLength]="10000"
+                fieldClass="work-card-modal-description" [(value)]="descriptionDraft" [disabled]="readonlyIssue() || saving()"
+                placeholder="Añade una descripción más detallada…" />
+            } @else {
+              <p class="m-0 whitespace-pre-wrap break-words leading-relaxed text-surface-800">{{ c.description || 'Sin descripción.' }}</p>
+            }
           </div>
+
+          @if (c.sla; as sla) {
+            <section class="grid gap-2 rounded-lg border border-primary-200 bg-primary-50 p-3 text-sm text-primary-900" aria-label="Plazos de atención">
+              <h3 class="m-0 font-semibold">Plazos de atención</h3>
+              <div>Primera respuesta {{ sla.firstReplyAt ? 'enviada el ' + slaDate(sla.firstReplyAt) : 'hasta el ' + slaDate(sla.firstReplyDueAt) }}</div>
+              <div>Resolución {{ sla.resolvedAt ? 'registrada el ' + slaDate(sla.resolvedAt) : 'hasta el ' + slaDate(sla.resolutionDueAt) }}</div>
+            </section>
+          }
 
           <div class="work-card-modal-section">
             <div class="work-card-modal-section-title">
@@ -137,26 +180,31 @@
           @if (cardId(); as id) {
             <app-work-card-time-panel [cardId]="id" [expanded]="showTimePanel()" />
           }
+          @if (fullPage()) { <ng-container *ngTemplateOutlet="activityContent" /> }
         </section>
 
         <aside class="work-card-modal-sidebar">
           <div class="work-card-sidebar-block">
-            <h4 class="work-card-sidebar-heading">Detalles</h4>
+            <h2 class="work-card-sidebar-heading">Campos</h2>
 
             <div class="work-card-field">
-              <span class="work-card-field-label">Tablero</span>
+              <span class="work-card-field-label">Proyecto</span>
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="work-card-field-value">{{ board() ? boardDisplayName(board()!) : '—' }}</span>
+                @if (!fullPage()) {
                 <p-button
                   label="Mover…"
                   icon="pi pi-arrows-h"
                   size="small"
                   text
+                  [disabled]="readonlyIssue()"
                   (onClick)="openMoveDialog()"
                 />
+                }
               </div>
             </div>
 
+            @if (!fullPage()) {
             <div class="work-card-field">
               <span class="work-card-field-label">Lista</span>
               <p-select
@@ -165,14 +213,22 @@
                 optionValue="value"
                 [ngModel]="boardListIdDraft()"
                 (ngModelChange)="boardListIdDraft.set($event)"
+                [disabled]="readonlyIssue() || saving()"
                 class="w-full"
                 appendTo="body"
               />
             </div>
+            }
 
             <div class="work-card-field">
-              <span class="work-card-field-label">Estado</span>
-              <span class="work-card-field-value">{{ statusLabel(c.columnId) }}</span>
+              <label for="drawer-issue-state" class="work-card-field-label">Estado</label>
+              @if (cardDetail().canEdit) {
+                <p-select inputId="drawer-issue-state" ariaLabel="Estado" [options]="stateOptions()"
+                  [ngModel]="stateDraft()" (ngModelChange)="stateDraft.set($event)" [disabled]="saving()"
+                  [fluid]="true" appendTo="body" />
+              } @else {
+                <span id="drawer-issue-state" class="work-card-field-value">{{ statusLabel(c.columnId) }}</span>
+              }
             </div>
 
             <div class="work-card-field">
@@ -183,6 +239,7 @@
                 optionValue="value"
                 [ngModel]="priorityDraft()"
                 (ngModelChange)="priorityDraft.set($event)"
+                [disabled]="readonlyIssue() || saving()"
                 class="w-full"
                 appendTo="body"
               />
@@ -197,18 +254,29 @@
                 [ngModel]="assigneeIdDraft()"
                 (ngModelChange)="assigneeIdDraft.set($event)"
                 [showClear]="true"
-                [disabled]="!canChangeAssignee()"
+                [disabled]="readonlyIssue() || saving() || !canChangeAssignee()"
                 placeholder="Sin asignar"
                 class="w-full"
                 appendTo="body"
               />
             </div>
 
+          @if (projectFields().length) {
+            <div class="grid gap-3 border-b border-surface-200 py-3">
+              <h3 class="work-card-sidebar-heading m-0">Campos del proyecto</h3>
+              <app-work-project-fields class="grid gap-3" prefix="issue-field" [fields]="projectFields()"
+                [values]="customFieldValues()" [readonly]="!cardDetail().canEdit"
+                [disabled]="saving()" (changed)="setCustomField($event.id, $event.value)" />
+            </div>
+          }
+
             <div class="work-card-field">
-              <span class="work-card-field-label">Inicio</span>
+              <label for="issue-planned-start" class="work-card-field-label">Inicio planificado</label>
               <p-datepicker
+                inputId="issue-planned-start"
                 [ngModel]="startDateDraft()"
                 (ngModelChange)="startDateDraft.set($event)"
+                [disabled]="readonlyIssue() || saving()"
                 [showIcon]="true"
                 [showClear]="true"
                 appendTo="body"
@@ -218,16 +286,24 @@
             </div>
 
             <div class="work-card-field">
-              <span class="work-card-field-label">Fin</span>
+              <label for="issue-planned-end" class="work-card-field-label">Fin planificado</label>
               <p-datepicker
+                inputId="issue-planned-end"
                 [ngModel]="endDateDraft()"
                 (ngModelChange)="endDateDraft.set($event)"
+                [disabled]="readonlyIssue() || saving()"
                 [showIcon]="true"
                 [showClear]="true"
                 appendTo="body"
                 dateFormat="dd/mm/yy"
                 styleClass="w-full"
               />
+            </div>
+
+            <div class="work-card-field">
+              <label for="issue-due" class="work-card-field-label">Vencimiento</label>
+              <p-datepicker inputId="issue-due" [ngModel]="dueDateDraft()" (ngModelChange)="dueDateDraft.set($event)"
+                [disabled]="readonlyIssue() || saving()" [showIcon]="true" [showClear]="true" appendTo="body" dateFormat="dd/mm/yy" styleClass="w-full" />
             </div>
 
             <div class="work-card-field">
@@ -237,6 +313,7 @@
                 class="w-full"
                 [ngModel]="issueTypeDraft()"
                 (ngModelChange)="issueTypeDraft.set($event)"
+                [disabled]="readonlyIssue() || saving()"
                 placeholder="Ej. Análisis, Despliegue, QA…"
               />
             </div>
@@ -249,6 +326,7 @@
                 class="w-full"
                 [ngModel]="observationsDraft()"
                 (ngModelChange)="observationsDraft.set($event)"
+                [disabled]="readonlyIssue() || saving()"
                 placeholder="Notas para el reporte semanal…"
               ></textarea>
             </div>
@@ -259,19 +337,103 @@
             </div>
           </div>
 
+          @if (!fullPage()) { <ng-container *ngTemplateOutlet="activityContent" /> }
+        </aside>
+        <ng-template #activityContent>
           <div class="work-card-sidebar-block work-card-activity">
             <div class="flex items-center justify-between gap-2 mb-3">
-              <h4 class="work-card-sidebar-heading m-0">Comentarios y actividad</h4>
+              <h4 class="work-card-sidebar-heading m-0">Actividad</h4>
             </div>
+            <div class="flex flex-wrap gap-2 mb-3" role="group" aria-label="Actividad de la incidencia">
+              <button type="button" class="work-board-switcher-tab"
+                [class.work-board-switcher-tab-active]="activityTab() === 'comments'"
+                [attr.aria-pressed]="activityTab() === 'comments'" (click)="activityTab.set('comments')">Comentarios</button>
+              <button type="button" class="work-board-switcher-tab"
+                [class.work-board-switcher-tab-active]="activityTab() === 'history'"
+                [attr.aria-pressed]="activityTab() === 'history'" (click)="activityTab.set('history')">Historial</button>
+              <button type="button" class="work-board-switcher-tab"
+                [class.work-board-switcher-tab-active]="activityTab() === 'time'"
+                [attr.aria-pressed]="activityTab() === 'time'" (click)="activityTab.set('time')">Partes de horas</button>
+            </div>
+            @if (activityTab() === 'history') {
+              @if (cardDetail().loading) {
+                <p role="status" class="text-sm text-surface-600">Cargando historial…</p>
+              } @else if (cardDetail().error) {
+                <p role="alert" class="text-sm text-red-700">No se pudo cargar el historial.</p>
+                <p-button label="Reintentar" severity="secondary" [text]="true" (onClick)="detailStore.load(c.id, true)" />
+              } @else {
+                <ol class="m-0 flex flex-col gap-3 p-0">
+                  @for (entry of cardDetail().activity; track entry.id) {
+                    <li class="work-card-comment list-none">
+                      <div class="flex flex-wrap items-center justify-between gap-1">
+                        <strong>{{ entry.actor }}</strong>
+                        <time class="text-xs text-surface-600" [attr.datetime]="entry.createdAt">{{ formatActivityDate(entry.createdAt) }}</time>
+                      </div>
+                      <p class="m-0 mt-2 text-sm">
+                        {{ activityLabels[entry.action] }} ·
+                        @if (entry.before) { {{ activityValue(entry.action, entry.before) }} → }
+                        {{ activityValue(entry.action, entry.after) }}
+                      </p>
+                    </li>
+                  } @empty {
+                    <li class="list-none text-sm text-surface-600">Todavía no hay cambios registrados.</li>
+                  }
+                </ol>
+              }
+            } @else if (activityTab() === 'time') {
+              @if (cardDetail().loading) {
+                <p role="status" class="m-0 text-sm text-surface-600">Cargando partes de horas…</p>
+              } @else if (cardDetail().error) {
+                <p role="alert" class="m-0 text-sm text-red-700">No se pudieron cargar los partes de horas.</p>
+              } @else {
+                <ul class="m-0 grid list-none gap-2 p-0">
+                  @for (entry of cardDetail().timeEntries; track entry.id) {
+                    <li class="work-card-comment">
+                      <div class="flex flex-wrap items-center justify-between gap-2">
+                        <strong>{{ workService.getMember(entry.memberId)?.name ?? 'Usuario' }} · {{ formatMinutes(entry.minutes) }}</strong>
+                        <time class="text-xs text-surface-600" [attr.datetime]="entry.loggedAt">{{ formatActivityDate(entry.loggedAt) }}</time>
+                      </div>
+                      @if (entry.note) { <p class="mb-0 mt-2 whitespace-pre-wrap text-sm">{{ entry.note }}</p> }
+                    </li>
+                  } @empty { <li class="text-sm text-surface-600">Todavía no hay partes de horas.</li> }
+                </ul>
+              }
+            } @else {
+            @if (c.helpdeskRequest) {
+              <div class="mb-2 grid gap-2">
+                @if (c.publicTrackingEnabled && workService.canAssignTasks()) {
+                  <label for="comment-audience" class="text-sm font-medium">Visibilidad del mensaje</label>
+                  <select id="comment-audience" class="p-inputtext w-full" [ngModel]="publicReply()"
+                    (ngModelChange)="publicReply.set($event)" [disabled]="commentPending()">
+                    <option [ngValue]="false">Nota interna</option>
+                    <option [ngValue]="true">Respuesta al solicitante</option>
+                  </select>
+                  @if (publicReply()) {
+                    <p class="m-0 text-sm text-primary-800">El mensaje aparecerá en el seguimiento de la solicitud.</p>
+                    <p-select [options]="responseTemplates" ariaLabel="Plantilla de respuesta" [ngModel]="null"
+                      placeholder="Insertar plantilla" appendTo="body" (ngModelChange)="addTemplate($event)" />
+                  }
+                } @else {
+                  <span class="text-sm font-medium text-surface-700">Nota interna</span>
+                }
+              </div>
+            }
             <textarea
               pTextarea
               rows="2"
               class="w-full mb-2"
+              maxlength="10000" aria-label="Mensaje" [disabled]="commentPending()"
               [ngModel]="commentText()"
               (ngModelChange)="commentText.set($event)"
               placeholder="Escribe un comentario…"
             ></textarea>
-            <p-button label="Comentar" icon="pi pi-send" size="small" class="mb-4" (onClick)="addComment()" />
+            @if (commentError()) {
+              <p role="alert" class="text-sm text-red-700">{{ commentError() }}</p>
+            }
+            <p-button [label]="publicReply() ? 'Publicar respuesta' : c.helpdeskRequest ? 'Guardar nota' : 'Comentar'"
+              [ariaLabel]="publicReply() ? 'Publicar respuesta' : c.helpdeskRequest ? 'Guardar nota' : 'Comentar'"
+              icon="pi pi-send" size="small" class="mb-4" [loading]="commentPending()"
+              [disabled]="!commentText().trim()" (onClick)="addComment()" />
 
             <div class="flex flex-col gap-3">
               @for (comment of comments(); track comment.id) {
@@ -281,11 +443,13 @@
                     <p-avatar
                       [label]="author?.initials ?? '?'"
                       shape="circle"
-                      style="background-color: #ccfbf1; color: #134e4a; width: 1.75rem; height: 1.75rem; font-size: 0.65rem"
+                      style="background-color: var(--p-highlight-background); color: var(--p-highlight-color); width: 1.75rem; height: 1.75rem; font-size: 0.65rem"
                     />
                     <div>
                       <div class="font-medium text-sm">{{ author?.name ?? 'Usuario' }}</div>
-                      <div class="text-xs text-surface-500">{{ formatDate(comment.createdAt) }}</div>
+                      <div class="text-xs text-surface-500">{{ formatDate(comment.createdAt) }}
+                        @if (c.helpdeskRequest) { · {{ comment.publicReply ? 'Respuesta al solicitante' : 'Nota interna' }} }
+                      </div>
                     </div>
                   </div>
                   <p class="text-sm m-0 whitespace-pre-wrap">{{ comment.text }}</p>
@@ -294,6 +458,7 @@
                 <p class="text-sm text-surface-500 m-0">Sin comentarios todavía.</p>
               }
             </div>
+            }
 
             <div class="text-xs text-surface-400 mt-4 pt-3 border-t border-surface-200">
               <div>Asignada: {{ c.assignedAt ? formatDate(c.assignedAt) : '—' }}</div>
@@ -301,10 +466,20 @@
               <div>Finalizada: {{ c.completedAt ? formatDate(c.completedAt) : 'En curso' }}</div>
             </div>
           </div>
-        </aside>
+        </ng-template>
       </div>
     </div>
   }
+</ng-template>
+
+<p-dialog header="Cambios sin guardar" [visible]="discardDialogOpen()"
+  (visibleChange)="!$event && cancelDiscard()" [modal]="true" [draggable]="false"
+  [style]="{width: 'min(94vw, 27rem)'}" appendTo="body" [baseZIndex]="11000">
+  <p class="mt-0 text-surface-700">Puedes seguir editando o salir y descartar los cambios de esta ficha.</p>
+  <div class="flex flex-wrap justify-end gap-2">
+    <p-button label="Seguir editando" severity="secondary" [text]="true" (onClick)="cancelDiscard()" />
+    <p-button label="Descartar y cerrar" severity="danger" [outlined]="true" (onClick)="discardAndClose()" />
+  </div>
 </p-dialog>
 
 <p-dialog
@@ -320,7 +495,7 @@
 >
   <div class="flex flex-col gap-4 pt-1">
     <div class="work-card-field m-0">
-      <span class="work-card-field-label">Tablero</span>
+      <span class="work-card-field-label">Proyecto</span>
       <p-select
         [options]="moveBoardOptions()"
         optionLabel="label"

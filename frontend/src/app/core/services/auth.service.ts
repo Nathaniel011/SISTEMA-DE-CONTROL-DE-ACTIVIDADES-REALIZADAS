@@ -1,4 +1,4 @@
-import {HttpClient} from '@angular/common/http';
+import {HttpClient, HttpErrorResponse} from '@angular/common/http';
 import {computed, inject, Injectable, signal} from '@angular/core';
 import {Router} from '@angular/router';
 import {firstValueFrom} from 'rxjs';
@@ -28,13 +28,19 @@ export class AuthService {
 
   private tokenState = signal<string | null>(this.readToken());
   private currentUserState = signal<AuthenticatedUser | null>(this.readStoredUser());
+  private sessionExpired = signal(false);
 
   currentUser = computed(() => this.currentUserState());
   isAuthenticated = computed(() => this.tokenState() !== null && this.currentUserState() !== null);
+  expired = this.sessionExpired.asReadonly();
 
   constructor() {
-    if (environment.useApi && this.tokenState()) {
-      void this.validateSession();
+    const token = this.tokenState();
+    if (environment.useApi && token) {
+      // The HTTP interceptors depend on AuthService and need construction to finish first.
+      queueMicrotask(() => {
+        if (this.tokenState() === token) void this.validateSession(token);
+      });
     }
   }
 
@@ -68,10 +74,11 @@ export class AuthService {
     await this.router.navigateByUrl('/work/issues');
   }
 
-  logout(): void {
+  logout(reason: 'manual' | 'expired' = 'manual'): void {
+    this.sessionExpired.set(reason === 'expired');
     this.clearSession();
     this.notificationService.stopPolling();
-    this.router.navigateByUrl('/auth/login');
+    void this.router.navigateByUrl('/auth/login', {replaceUrl: true});
   }
 
   updateProfile(payload: Pick<AuthenticatedUser, 'fullName' | 'email'>): Promise<AuthenticatedUser> {
@@ -83,15 +90,18 @@ export class AuthService {
     if (!environment.useApi) {
       const next = { ...currentUser, ...payload };
       this.currentUserState.set(next);
-      localStorage.setItem(USER_KEY, JSON.stringify(next));
+      this.persistSession();
       return Promise.resolve(next);
     }
 
+    const token = this.tokenState();
     return firstValueFrom(
       this.http.put<AuthenticatedUser>(`${environment.apiUrl}/api/auth/profile`, payload)
     ).then(user => {
-      this.currentUserState.set(user);
-      localStorage.setItem(USER_KEY, JSON.stringify(user));
+      if (this.tokenState() === token) {
+        this.currentUserState.set(user);
+        this.persistSession();
+      }
       return user;
     });
   }
@@ -110,38 +120,61 @@ export class AuthService {
     );
   }
 
-  private async validateSession(): Promise<void> {
+  private async validateSession(token: string): Promise<void> {
     try {
       const user = await firstValueFrom(
         this.http.get<AuthenticatedUser>(`${environment.apiUrl}/api/auth/me`)
       );
+      if (this.tokenState() !== token) return;
       this.currentUserState.set(user);
-      localStorage.setItem(USER_KEY, JSON.stringify(user));
+      this.persistSession();
       this.notificationService.startPolling();
-    } catch {
-      this.clearSession();
+    } catch (error: unknown) {
+      // Solo limpiar sesión ante token inválido/expirado; no por caídas de red o 5xx.
+      if (this.tokenState() === token && error instanceof HttpErrorResponse && (error.status === 401 || error.status === 403)) {
+        this.logout('expired');
+      }
     }
   }
 
   private setSession(token: string, user: AuthenticatedUser): void {
+    this.sessionExpired.set(false);
     this.tokenState.set(token);
     this.currentUserState.set(user);
-    localStorage.setItem(TOKEN_KEY, token);
-    localStorage.setItem(USER_KEY, JSON.stringify(user));
+    this.persistSession();
   }
 
   private clearSession(): void {
     this.tokenState.set(null);
     this.currentUserState.set(null);
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
+    this.persistSession();
+  }
+
+  private persistSession(): void {
+    try {
+      const token = this.tokenState();
+      const user = this.currentUserState();
+      if (token && user) {
+        localStorage.setItem(TOKEN_KEY, token);
+        localStorage.setItem(USER_KEY, JSON.stringify(user));
+      } else {
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(USER_KEY);
+      }
+    } catch {
+      // Authentication remains available in memory when browser storage is blocked.
+    }
   }
 
   private readToken(): string | null {
     if (!environment.useApi) {
       return null;
     }
-    return localStorage.getItem(TOKEN_KEY);
+    try {
+      return typeof localStorage === 'undefined' ? null : localStorage.getItem(TOKEN_KEY);
+    } catch {
+      return null;
+    }
   }
 
   private readStoredUser(): AuthenticatedUser | null {

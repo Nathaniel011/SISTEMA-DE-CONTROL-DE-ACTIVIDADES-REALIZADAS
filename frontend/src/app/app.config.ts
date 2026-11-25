@@ -1,6 +1,7 @@
-import { ApplicationConfig, provideBrowserGlobalErrorListeners } from '@angular/core';
+import { ApplicationConfig, inject, provideAppInitializer, provideBrowserGlobalErrorListeners } from '@angular/core';
 import {provideHttpClient, withInterceptors} from '@angular/common/http';
 import { provideRouter } from '@angular/router';
+import {provideClientHydration, withNoHttpTransferCache} from '@angular/platform-browser';
 import Aura from '@primeuix/themes/aura';
 
 import { routes } from './app.routes';
@@ -9,6 +10,8 @@ import {definePreset} from '@primeuix/themes';
 import lang from '../assets/lang.json';
 import {authInterceptor} from './core/interceptors/auth.interceptor';
 import {errorInterceptor} from './core/interceptors/error.interceptor';
+import {inFlightInterceptor} from './core/interceptors/in-flight.interceptor';
+import {ThemeService} from './core/services/theme.service';
 
 const Preset = definePreset(Aura, {
   components: {
@@ -65,6 +68,12 @@ const Preset = definePreset(Aura, {
     },
     colorScheme: {
       light: {
+        primary: {
+          color: '{primary.700}',
+          contrastColor: '{surface.0}',
+          hoverColor: '{primary.800}',
+          activeColor: '{primary.900}'
+        },
         surface: {
           0: '{track.0}',
           50: '{track.50}',
@@ -79,6 +88,23 @@ const Preset = definePreset(Aura, {
           900: '{track.900}',
           950: '{track.950}'
         }
+      },
+      dark: {
+        surface: {
+          0: '#ffffff',
+          50: '#f2f7f7',
+          100: '#deeaeb',
+          200: '#c9d9da',
+          300: '#b3c9cb',
+          400: '#9cb3b6',
+          500: '#789397',
+          600: '#526b70',
+          700: '#384c51',
+          800: '#26373c',
+          900: '#1a292e',
+          950: '#101b20'
+        },
+        text: { color: '{surface.100}' }
       }
     }
   }
@@ -87,14 +113,16 @@ const Preset = definePreset(Aura, {
 export const appConfig: ApplicationConfig = {
   providers: [
     provideBrowserGlobalErrorListeners(),
-    provideHttpClient(withInterceptors([authInterceptor, errorInterceptor])),
+    provideAppInitializer(() => { inject(ThemeService); }),
+    provideHttpClient(withInterceptors([authInterceptor, errorInterceptor, inFlightInterceptor])),
+    provideClientHydration(withNoHttpTransferCache()),
     provideRouter(routes),
     providePrimeNG({
       ripple: true,
       theme: {
         preset: Preset,
         options: {
-          darkModeSelector: '.dark-mode',
+          darkModeSelector: '.scar-dark',
           cssLayer: {
             name: 'primeng',
             order: 'theme, base, primeng'

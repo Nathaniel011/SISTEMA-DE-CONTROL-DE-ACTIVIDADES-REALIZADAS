@@ -1,0 +1,10 @@
+.git
+**/node_modules
+**/dist
+**/target
+**/.angular
+**/uploads
+**/*.log
+dev/local.env
+**/.env
+**/.env.local

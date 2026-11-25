@@ -1,0 +1,54 @@
+<section aria-label="Calendario de vencimientos" class="grid gap-3">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <h2 class="m-0 text-lg font-semibold first-letter:uppercase" aria-live="polite">{{ title() }}</h2>
+    <div class="flex items-center gap-1">
+      <p-button icon="pi pi-chevron-left" ariaLabel="Mes anterior" severity="secondary" [text]="true" (onClick)="jump(-1)" />
+      <p-button label="Hoy" ariaLabel="Hoy" size="small" severity="secondary" [outlined]="true" (onClick)="goToday()" />
+      <p-button icon="pi pi-chevron-right" ariaLabel="Mes siguiente" severity="secondary" [text]="true" (onClick)="jump(1)" />
+    </div>
+  </div>
+  <div class="hidden overflow-hidden rounded-xl border border-surface-200 md:block">
+    <div class="grid grid-cols-7 bg-surface-100 text-sm font-semibold text-surface-700">
+      @for (day of days; track day) { <div class="px-3 py-2">{{ day }}</div> }
+    </div>
+    <div class="grid grid-cols-7">
+      @for (date of dates(); track date.iso) {
+        <section class="min-h-24 min-w-0 border-b border-r border-surface-200 p-2" [class.bg-surface-50]="!date.inside"
+          [attr.aria-label]="date.label">
+          <time class="inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium"
+            [class.bg-highlight]="date.today" [class.font-bold]="date.today" [attr.datetime]="date.iso">{{ date.day }}</time>
+          <div class="mt-1 grid gap-1">
+            @for (card of date.cards; track card.id) {
+              <a class="block truncate rounded bg-primary-50 px-2 py-1 text-xs font-medium text-primary-900 hover:underline"
+                [title]="reference(card) + ' · ' + card.title" [routerLink]="[]" [queryParams]="{issue: card.id}"
+                queryParamsHandling="merge">{{ reference(card) }} · {{ card.title }}</a>
+            }
+          </div>
+        </section>
+      }
+    </div>
+  </div>
+  <div class="grid gap-3 md:hidden">
+    @for (day of scheduled(); track day.iso) {
+      <section class="rounded-lg border border-surface-200 p-3">
+        <h3 class="m-0 mb-2 text-sm font-semibold first-letter:uppercase">{{ day.label }}</h3>
+        @for (card of day.cards; track card.id) {
+          <a class="block py-1 text-primary-800 hover:underline" [routerLink]="[]" [queryParams]="{issue: card.id}"
+            queryParamsHandling="merge">{{ reference(card) }} · {{ card.title }}</a>
+        }
+      </section>
+    }
+  </div>
+  @if (!scheduled().length) { <p class="m-0 text-sm text-surface-600">Sin vencimientos en este mes.</p> }
+  @if (unscheduled().length) {
+    <details class="rounded-lg border border-surface-200 p-3">
+      <summary class="cursor-pointer font-medium">Sin vencimiento · {{ unscheduled().length }}</summary>
+      <ul class="mb-0 mt-2 max-h-60 list-none overflow-auto p-0">
+        @for (card of unscheduled(); track card.id) {
+          <li><a class="block py-1 text-primary-800 hover:underline" [routerLink]="[]" [queryParams]="{issue: card.id}"
+            queryParamsHandling="merge">{{ reference(card) }} · {{ card.title }}</a></li>
+        }
+      </ul>
+    </details>
+  }
+</section>

@@ -1,8 +1,10 @@
 package com.scar.api.domain.entity;
 
+import com.scar.api.domain.enums.IssueColumn;
 import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 
@@ -53,4 +55,17 @@ public class BoardList {
     public Set<Issue> getIssues() { return issues; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
+
+    public IssueColumn issueColumn() {
+        String lower = name.toLowerCase(Locale.ROOT);
+        if (lower.contains("hecho") || lower.contains("cerrad") || lower.contains("finaliz")
+            || lower.contains("archivad") || lower.contains("completad")) return IssueColumn.done;
+        if (lower.contains("progreso") || lower.contains("curso") || lower.contains("proceso")) return IssueColumn.in_progress;
+        if (lower.contains("revis")) return IssueColumn.review;
+        if (lower.contains("pendient")) return IssueColumn.todo;
+        if (lower.contains("asign")) return IssueColumn.in_assignment;
+        if (lower.contains("tarea")) return IssueColumn.todo;
+        if (lower.contains("registr")) return IssueColumn.registered;
+        return IssueColumn.todo;
+    }
 }

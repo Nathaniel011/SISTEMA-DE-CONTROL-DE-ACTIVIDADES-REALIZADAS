@@ -1,137 +1,352 @@
-<div class="yt-page">
-  <aside class="yt-subnav">
-    <div class="yt-subnav-section">
-      <div class="yt-subnav-title">Borradores</div>
-      <button type="button" class="yt-subnav-link">Mis borradores</button>
-    </div>
-
-    <div class="yt-subnav-section">
-      <div class="yt-subnav-title">Tableros</div>
-      <p-select
-        [options]="boardOptions()"
-        optionLabel="label"
-        optionValue="value"
-        [ngModel]="workService.selectedBoardId()"
-        (ngModelChange)="workService.selectedBoardId.set($event)"
-        class="w-full"
-      />
-    </div>
-
-    <div class="yt-subnav-section">
-      <div class="yt-subnav-title">Búsquedas guardadas</div>
-      <button
-        type="button"
-        class="yt-subnav-link"
-        [class.yt-subnav-link-active]="workService.activeSavedSearch() === 'all'"
-        (click)="selectSearch('all')"
-      >
-        <span>Todas las incidencias</span>
-        <span class="yt-subnav-badge">{{ searchCount('all') }}</span>
-      </button>
-      @for (item of savedSearches; track item.id) {
-        <button
-          type="button"
-          class="yt-subnav-link"
-          [class.yt-subnav-link-active]="workService.activeSavedSearch() === item.filter"
-          (click)="selectSearch(item.filter)"
-        >
-          <span>{{ item.label }}</span>
-          <span class="yt-subnav-badge">{{ searchCount(item.filter) }}</span>
+<main class="issue-queue" aria-labelledby="issues-title">
+  <app-work-page-header headingId="issues-title"
+    [title]="boardSurface ? (configured()?.name ?? (configuredId() ? 'Tablero' : 'Tablero global')) : 'Incidencias'"
+    [icon]="boardSurface ? 'pi pi-objects-column' : 'pi pi-list'" [description]="description()">
+    @if (boardSurface) {
+      <p-button label="Tableros" ariaLabel="Volver a tableros" icon="pi pi-arrow-left" severity="secondary" [text]="true" routerLink="/work/agile" />
+      <p-button label="Ver en Incidencias" ariaLabel="Ver en Incidencias" icon="pi pi-list" severity="secondary" [outlined]="true"
+        routerLink="/work/issues" [queryParams]="transitionParams()" [disabled]="loading() || loadError()" />
+    } @else {
+      <div class="view-switch" role="group" aria-label="Vista de incidencias">
+        <button type="button" [attr.aria-pressed]="view() === 'list'" (click)="updateUrl({view: 'list'})">
+          <i class="pi pi-list" aria-hidden="true"></i> Lista
         </button>
-      }
-    </div>
-  </aside>
+        <button type="button" [attr.aria-pressed]="view() === 'calendar'" (click)="updateUrl({view: 'calendar'})">
+          <i class="pi pi-calendar" aria-hidden="true"></i> Calendario
+        </button>
+      </div>
+    }
+    <p-button label="Nueva incidencia" ariaLabel="Nueva incidencia" icon="pi pi-plus"
+      [disabled]="boardOptions().length <= 1 || loading() || loadError()" (onClick)="issueCreate.open(board())" />
+  </app-work-page-header>
 
-  <div class="yt-content">
-    <div class="yt-content-header">
-      <div>
-        <h1 class="yt-content-title">Incidencias <span class="text-surface-400 font-normal">{{ issues().length }}</span></h1>
+  @if (demo) {
+    <p class="queue-notice"><i class="pi pi-info-circle" aria-hidden="true"></i> Modo demostración · Datos de ejemplo guardados en este navegador</p>
+  }
+
+  <section class="filter-panel" aria-label="Filtros de incidencias">
+    <div class="filter-bar">
+      <p-iconfield class="issue-search">
+        <p-inputicon class="pi pi-search" aria-hidden="true" />
+        <input #search pInputText type="search" placeholder="Buscar asunto o usar proyecto: ARG"
+          aria-label="Buscar incidencias" [value]="searchDraft()" [attr.aria-invalid]="queryIncomplete() || null"
+          [attr.aria-describedby]="queryIncomplete() ? 'issue-query-error' : null"
+          (input)="updateSearch(search.value)" />
+      </p-iconfield>
+      <p-select inputId="issue-board" ariaLabel="Proyecto" [options]="boardOptions()"
+        [ngModel]="board()" (ngModelChange)="filter({board: $event, boards: null})" [fluid]="true"
+        placeholder="Todos los proyectos" appendTo="body" />
+      <p-select inputId="issue-status" ariaLabel="Estado" [options]="statusOptions"
+        [ngModel]="status()" (ngModelChange)="filter({status: $event})" [fluid]="true"
+        placeholder="Todos los estados" appendTo="body" />
+      <p-select inputId="issue-member" ariaLabel="Responsable" [options]="memberOptions()"
+        [ngModel]="member()" (ngModelChange)="filter({member: $event})" [fluid]="true"
+        placeholder="Cualquier responsable" appendTo="body" />
+    </div>
+    @if (queryIncomplete()) {
+      <p id="issue-query-error" role="status" class="mb-0 mt-2 text-sm text-red-700">Completa el filtro. Usa llaves para valores de varias palabras.</p>
+    }
+    <div class="scope-bar">
+      <div class="scopes" role="group" aria-label="Filtros rápidos">
+        @for (item of scopes; track item.value) {
+          <button type="button" class="scope-button" [attr.aria-pressed]="scope() === item.value"
+            (click)="filter({scope: item.value === 'all' ? null : item.value})">
+            <i class="pi" [class]="item.icon" aria-hidden="true"></i>
+            <span>{{ item.label }}</span>
+            @if (!loading() && !loadError()) {
+              <span class="scope-count">{{ scopeCounts()[item.value] }}</span>
+            }
+          </button>
+        }
+      </div>
+      <div class="flex flex-wrap gap-1">
+        @if (hasFilters()) {
+          <p-button label="Limpiar filtros" ariaLabel="Limpiar filtros" icon="pi pi-filter-slash" severity="secondary"
+            [text]="true" size="small" (onClick)="clearFilters()" />
+        }
+        <p-button label="Más filtros" ariaLabel="Más filtros" icon="pi pi-filter" severity="secondary" [text]="true" size="small"
+          (onClick)="moreFiltersOpen.set(true)" />
+        @if (!boardSurface) {
+          <p-button label="Mis vistas" ariaLabel="Mis vistas" icon="pi pi-bookmark" severity="secondary" [text]="true" size="small"
+            (onClick)="openViews()" />
+          <p-button label="Abrir en tablero" ariaLabel="Abrir en tablero" icon="pi pi-objects-column" severity="secondary"
+            [text]="true" size="small" routerLink="/work/agile/vista" [queryParams]="transitionParams()" />
+        }
       </div>
     </div>
+    @if (group() || createdFrom() || createdTo()) {
+      <p class="m-0 mt-2 text-xs text-surface-700">
+        @if (group()) { {{ group() === 'open' ? 'Abiertas' : group() === 'closed' ? 'Completadas' : 'En curso y en revisión' }} }
+        @if (createdFrom()) { · Creadas desde {{ formatDate(createdFrom()) }} }
+        @if (createdTo()) { · Creadas hasta {{ formatDate(createdTo()) }} }
+      </p>
+    }
+    @if (selectedBoards().length) {
+      <p class="m-0 mt-2 text-xs text-surface-700">Proyectos seleccionados · {{ selectedBoards().length }}</p>
+    }
+  </section>
 
-    <div class="yt-search-bar">
-      <p-iconfield class="flex-1">
-        <p-inputicon class="pi pi-search" />
-        <input
-          pInputText
-          class="w-full"
-          placeholder="Buscar texto o añadir un filtro"
-          [ngModel]="searchQuery()"
-          (ngModelChange)="searchQuery.set($event)"
-        />
-      </p-iconfield>
-      <p-button icon="pi pi-filter" text severity="secondary" />
-      <p-button icon="pi pi-table" text severity="secondary" />
-    </div>
+  <section class="results" aria-label="Resultados" [attr.aria-busy]="loading()">
+    @if (loading()) {
+      <app-work-skeleton label="Cargando incidencias…" />
+    } @else if (loadError()) {
+      <div class="queue-empty" role="alert">
+        <i class="pi pi-exclamation-circle" aria-hidden="true"></i>
+        <h2>{{ configuredId() ? 'No se pudo abrir el tablero' : 'No se pudieron cargar las incidencias' }}</h2>
+        <p>{{ configuredId() ? 'Revisa el acceso o vuelve a intentarlo.' : 'Comprueba la conexión y vuelve a intentarlo.' }}</p>
+        <p-button label="Reintentar" icon="pi pi-refresh" [outlined]="true" (onClick)="load()" />
+      </div>
+    } @else {
+      <div class="results-bar">
+        <p aria-live="polite"><strong>{{ resultTotal() }}</strong> {{ resultTotal() === 1 ? 'incidencia' : 'incidencias' }}</p>
+        @if (view() === 'list') {
+          <div class="sort-control">
+            <label for="issue-sort">Orden</label>
+            <p-select inputId="issue-sort" ariaLabel="Orden" [options]="sortOptions" [ngModel]="sort()"
+              (ngModelChange)="filter({sort: $event === 'recent' ? null : $event})" size="small" appendTo="body" />
+          </div>
+        }
+      </div>
 
-    <div class="flex-1 overflow-auto px-2">
-    <p-table
-      [value]="issues()"
-      [tableStyle]="{ 'min-width': '100%' }"
-      styleClass="yt-issues-table"
-      [rowHover]="true"
-      [scrollable]="true"
-      scrollHeight="flex"
-    >
-      <ng-template #header>
-        <tr>
-          <th style="width: 3rem"></th>
-          <th style="width: 7rem">ID</th>
-          <th>Resumen</th>
-          <th style="width: 9rem">Tablero</th>
-          <th style="width: 8rem">Estado</th>
-          <th style="width: 11rem">Usuario asignado</th>
-          <th style="width: 8rem">Prioridad</th>
-        </tr>
-      </ng-template>
-      <ng-template #body let-issue>
-        @let assignee = workService.getMember(issue.assigneeId);
-        @let priority = priorityMeta(issue.priority);
-        <tr class="yt-issue-row" (click)="openIssue(issue.id)">
-          <td (click)="$event.stopPropagation()">
-            <input type="checkbox" class="yt-issue-check" />
-          </td>
-          <td>
-            <span class="font-mono text-sm text-primary-600">{{ workService.getIssueKey(issue) }}</span>
-          </td>
-          <td>
-            <div class="flex items-center gap-2 min-w-0">
-              <span class="truncate">{{ issue.title }}</span>
-            </div>
-          </td>
-          <td>
-            <span class="text-sm text-surface-600">{{ workService.getBoard(issue.boardId)?.name ?? '—' }}</span>
-          </td>
-          <td>
-            <span class="yt-issue-status">{{ workService.getIssueDisplayStatus(issue) }}</span>
-          </td>
-          <td>
-            @if (assignee) {
-              <div class="flex items-center gap-2">
-                <p-avatar [label]="assignee.initials" shape="circle" style="background-color: #ccfbf1; color: #134e4a; width: 1.5rem; height: 1.5rem; font-size: 0.6rem" />
-                <span class="text-sm">{{ assignee.name }}</span>
-              </div>
-            } @else {
-              <span class="text-sm text-surface-400"><i class="pi pi-user mr-1"></i>Sin asignar</span>
+      @if (detailLoading()) {
+        <app-work-skeleton label="Cargando ficha…" />
+      } @else if (issueId() && !openCard()) {
+        <div role="alert" class="queue-notice">
+          No se encontró la incidencia o no tienes acceso.
+          <p-button label="Cerrar aviso" [text]="true" size="small" (onClick)="closeIssue()" />
+        </div>
+      }
+      @if (moveError() && !moveIssueId()) {
+        <p role="alert" class="queue-notice notice-error">{{ moveError() }}</p>
+      }
+      <p class="queue-notice move-announcement" role="status" [class.sr-only]="!announcement()">
+        @if (announcement()) {
+          <i class="pi pi-check-circle" aria-hidden="true"></i> {{ announcement() }}
+        }
+      </p>
+
+      @if (!resultTotal() && view() !== 'board') {
+        <div class="queue-empty">
+          <i class="pi pi-inbox" aria-hidden="true"></i>
+          <h2>{{ hasFilters() ? 'No hay coincidencias' : 'No hay incidencias' }}</h2>
+          <p>{{ hasFilters() ? 'Prueba con otros filtros o términos de búsqueda.' : 'Aquí aparecerán las incidencias de los proyectos disponibles.' }}</p>
+          @if (hasFilters()) {
+            <p-button label="Limpiar filtros" [outlined]="true" (onClick)="clearFilters()" />
+          }
+        </div>
+      } @else if (view() === 'board') {
+        <div class="work-kanban-scroll board-scroll" tabindex="0" role="region" aria-label="Tablero por estado">
+          <div class="work-kanban issue-board">
+            @for (column of columns(); track column.id) {
+              <section class="work-kanban-column board-column" [attr.aria-labelledby]="'column-' + column.id" [attr.data-state]="column.id"
+                [class.kanban-drop-available]="isDropDestination(column.id)" [class.kanban-drop-active]="dropTarget() === column.id"
+                (dragover)="allowDrop($event, column.id)" (drop)="drop($event, column.id)">
+                <header class="work-kanban-column-header">
+                  <span class="work-kanban-marker" aria-hidden="true"></span>
+                  <h2 [id]="'column-' + column.id">{{ labels[column.id] }}</h2>
+                  <span class="work-kanban-count">{{ column.cards.length }}</span>
+                </header>
+                <div class="work-kanban-cards">
+                  @for (card of column.cards; track card.id) {
+                    @let issueKey = work.getIssueKey(card);
+                    <article appWorkKanbanCard [navigationParams]="pendingSearchParams()" class="issue-card" [card]="card" [issueKey]="issueKey" [member]="work.getMember(card.assigneeId)"
+                      [projectName]="projectLabel(card.boardId)" [attr.draggable]="canMove(card) && !moving()"
+                      [class.kanban-dragging]="dragged()?.id === card.id"
+                      (dragstart)="startDrag($event, card)" (dragend)="endDrag()">
+                      @if (canMove(card)) {
+                        <button class="work-kanban-icon" type="button" [attr.aria-label]="'Cambiar estado de ' + issueKey"
+                          title="Cambiar estado" [disabled]="moving()" (click)="openMove(card)">
+                          <i class="pi pi-arrow-right-arrow-left" aria-hidden="true"></i>
+                        </button>
+                      }
+                    </article>
+                  } @empty {
+                    <p class="work-kanban-empty">Sin incidencias</p>
+                  }
+                </div>
+              </section>
             }
-          </td>
-          <td>
-            <span class="text-sm" [class]="priority.tone">{{ priority.label }}</span>
-          </td>
-        </tr>
-      </ng-template>
-      <ng-template #emptymessage>
-        <tr>
-          <td colspan="7" class="text-center text-surface-500 py-8">No hay incidencias con los filtros actuales.</td>
-        </tr>
-      </ng-template>
-    </p-table>
-    </div>
-  </div>
-</div>
+          </div>
+        </div>
+      } @else if (view() === 'calendar') {
+        <app-work-issue-calendar [cards]="results()" [month]="month()" (monthChange)="updateUrl({month: $event})" />
+      } @else {
+        <div class="issue-list" role="region" aria-label="Tabla desplazable de incidencias" tabindex="0">
+          <table aria-label="Lista de incidencias">
+            <thead>
+              <tr>
+                <th scope="col">Incidencia</th>
+                <th scope="col">Estado</th>
+                <th scope="col">Responsable</th>
+                <th scope="col">Vencimiento</th>
+                <th scope="col"><span class="sr-only">Acciones</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (card of pageCards(); track card.id) {
+                <tr>
+                  <td class="row-title">
+                    <a class="issue-key hover:underline" [routerLink]="['/work/issues', card.id]"
+                      [queryParams]="issuePageContext()" [attr.aria-label]="'Abrir página de ' + work.getIssueKey(card)">
+                      {{ work.getIssueKey(card) }}
+                    </a>
+                    <a class="issue-link" [routerLink]="[]" [queryParams]="{...pendingSearchParams(), issue: card.id}" queryParamsHandling="merge">
+                      {{ card.title }}
+                    </a>
+                  </td>
+                  <td class="row-status">
+                    <span class="state-label">
+                      <span class="state-dot" [attr.data-state]="card.columnId" aria-hidden="true"></span>
+                      {{ labels[card.columnId] }}
+                    </span>
+                  </td>
+                  <td class="row-owner">
+                    <div class="card-owner">
+                      @if (work.getMember(card.assigneeId); as member) {
+                        <p-avatar [label]="member.initials" shape="circle" styleClass="queue-avatar" aria-hidden="true" />
+                        <span>{{ member.name }}</span>
+                      } @else {
+                        <p-avatar icon="pi pi-user" shape="circle" styleClass="queue-avatar empty-avatar" aria-hidden="true" />
+                        <span>Sin asignar</span>
+                      }
+                    </div>
+                  </td>
+                  <td class="row-date">
+                    @if (card.dueDate) {
+                      <span class="due-date" [class.overdue]="overdue(card)">
+                        <i class="pi pi-calendar" aria-hidden="true"></i>
+                        <span>{{ formatDate(card.dueDate) }}@if (overdue(card)) { · Vencida }</span>
+                      </span>
+                    } @else {
+                      <span class="no-date">Sin fecha</span>
+                    }
+                  </td>
+                  <td class="row-action">
+                    @if (editable(card)) {
+                      <button class="move-button" type="button" [attr.aria-label]="'Editar campos de ' + work.getIssueKey(card)"
+                        title="Editar campos" (click)="openQuickEdit(card)">
+                        <i class="pi pi-pencil" aria-hidden="true"></i>
+                      </button>
+                    }
+                    @if (canMove(card)) {
+                      <button class="move-button" type="button"
+                        [attr.aria-label]="'Cambiar estado de ' + work.getIssueKey(card)"
+                        title="Cambiar estado" [disabled]="moving()" (click)="openMove(card)">
+                        <i class="pi pi-arrow-right-arrow-left" aria-hidden="true"></i>
+                      </button>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+          @if (resultTotal() > pageSize) {
+            <p-paginator [first]="first()" [rows]="pageSize" [totalRecords]="resultTotal()"
+              [showFirstLastIcon]="false" [pageLinkSize]="3" (onPageChange)="changePage($event)" />
+          }
+        </div>
+      }
+    }
+  </section>
+</main>
 
-<app-work-card-drawer
-  [visible]="drawerOpen()"
-  (visibleChange)="drawerOpen.set($event)"
-  [cardId]="selectedCardId()"
-/>
+<p-dialog header="Editar campos" [visible]="!!quickIssueId()" (visibleChange)="!$event && closeQuickEdit()"
+  [modal]="true" [draggable]="false" [closable]="!quickSaving()" [closeOnEscape]="!quickSaving()"
+  [style]="{width: 'min(94vw, 26rem)'}">
+  @if (quickCard(); as card) {
+    <form class="grid gap-3" (ngSubmit)="saveQuickEdit()">
+      <p class="m-0 text-sm text-surface-700">{{ work.getIssueKey(card) }} · {{ card.title }}</p>
+      @if (work.canAssignTasks()) {
+        <label for="quick-owner" class="font-medium">Responsable</label>
+        <p-select inputId="quick-owner" name="owner" [options]="quickMembers()" [ngModel]="quickAssignee()"
+          (ngModelChange)="quickAssignee.set($event)" [fluid]="true" [disabled]="quickSaving()" appendTo="body" />
+      }
+      <label for="quick-due" class="font-medium">Vencimiento</label>
+      <input id="quick-due" name="due" type="date" pInputText [ngModel]="quickDue()"
+        (ngModelChange)="quickDue.set($event)" [disabled]="quickSaving()" />
+      @if (quickError()) { <p class="m-0 text-sm text-red-700" role="alert">{{ quickError() }}</p> }
+      <div class="flex justify-end gap-2">
+        <p-button label="Cancelar" severity="secondary" [text]="true" [disabled]="quickSaving()" (onClick)="closeQuickEdit()" />
+        <p-button label="Guardar" ariaLabel="Guardar" type="submit" icon="pi pi-check" [loading]="quickSaving()" />
+      </div>
+    </form>
+  }
+</p-dialog>
+
+<app-work-issue-create #issueCreate [projectIds]="allowedProjectIds()" (created)="openCreated($event.id)" />
+
+<p-dialog header="Más filtros" [visible]="moreFiltersOpen()" (visibleChange)="moreFiltersOpen.set($event)"
+  [modal]="true" [draggable]="false" [style]="{width: 'min(94vw, 27rem)'}">
+  <div class="grid gap-3">
+    <details class="rounded-lg border border-surface-200 p-3 text-sm">
+      <summary class="cursor-pointer font-semibold text-primary-800">Sintaxis de búsqueda</summary>
+      <p class="mb-0 mt-2">Combina texto con filtros como <code>proyecto: ARG estado: &#123;En curso&#125; responsable: mí</code>.</p>
+      <p class="mb-0 mt-2">También puedes usar <code>#ARG</code>, <code>prioridad: alta</code>, <code>tipo:</code> e <code>id:</code>. Usa comas para alternativas y <code>-</code> para excluir un valor.</p>
+    </details>
+    <label for="issue-projects" class="font-medium">Varios proyectos</label>
+    <p-multiselect inputId="issue-projects" ariaLabel="Varios proyectos" [options]="projectOptions()" optionLabel="label"
+      optionValue="value" [ngModel]="selectedBoards()" (ngModelChange)="filter({board: null, boards: $event?.join(',') || null})"
+      [filter]="true" [fluid]="true" placeholder="Seleccionar proyectos" appendTo="body" />
+    <label for="issue-priority" class="font-semibold">Prioridad</label>
+    <p-select inputId="issue-priority" [options]="priorityOptions" [ngModel]="priority()"
+      (ngModelChange)="filter({priority: $event})" placeholder="Cualquier prioridad" [fluid]="true" appendTo="body" />
+    <label for="issue-activity" class="font-semibold">Actividad</label>
+    <p-select inputId="issue-activity" [options]="activityOptions" [ngModel]="activity()"
+      (ngModelChange)="filter({activity: $event})" placeholder="Toda la actividad" [fluid]="true" appendTo="body" />
+    <p-button label="Listo" class="justify-self-end" (onClick)="moreFiltersOpen.set(false)" />
+  </div>
+</p-dialog>
+
+<p-dialog header="Mis vistas" [visible]="viewsOpen()" (visibleChange)="viewsOpen.set($event)"
+  [modal]="true" [draggable]="false" [style]="{width: 'min(94vw, 31rem)'}">
+  <div class="grid gap-3">
+    <ul class="m-0 grid list-none gap-2 p-0">
+      @for (view of savedViews(); track view.name) {
+        <li class="flex items-center justify-between gap-2 rounded-lg border border-surface-200 p-2">
+          <button type="button" class="min-w-0 flex-1 cursor-pointer px-1 text-left font-semibold text-primary-800"
+            (click)="restoreView(view)">{{ view.name }}</button>
+          <p-button icon="pi pi-link" severity="secondary" [text]="true" [ariaLabel]="'Copiar enlace de ' + view.name"
+            (onClick)="copyView(view)" />
+          <p-button icon="pi pi-trash" severity="secondary" [text]="true" [ariaLabel]="'Eliminar vista ' + view.name" [disabled]="viewsBusy()"
+            (onClick)="deleteView(view)" />
+        </li>
+      } @empty {
+        <li class="text-surface-700">{{ viewsBusy() ? 'Cargando tus vistas…' : 'Todavía no tienes vistas guardadas.' }}</li>
+      }
+    </ul>
+    <form class="grid gap-2 border-t border-surface-200 pt-3" (ngSubmit)="saveView()">
+      <label for="saved-view-name" class="font-semibold">Nombre para guardar los filtros actuales</label>
+      <input pInputText id="saved-view-name" name="viewName" maxlength="48" [ngModel]="viewName()"
+        (ngModelChange)="viewName.set($event)" placeholder="Ej. Vencidas de Operaciones" />
+      @if (viewError()) {
+        <p role="alert" class="m-0 text-red-700">{{ viewError() }}</p>
+      }
+      <p-button type="submit" label="Guardar vista" ariaLabel="Guardar vista" icon="pi pi-bookmark"
+        class="justify-self-end" [loading]="viewsBusy()" [disabled]="!viewName().trim()" />
+    </form>
+  </div>
+</p-dialog>
+
+<app-work-card-drawer [cardId]="openCard()?.id ?? null" [visible]="!!openCard()" [discardDraftOnClose]="false"
+  (visibleChange)="!$event && closeIssue()" />
+
+<p-dialog header="Cambiar estado" [visible]="!!moveIssueId()" [modal]="true" [draggable]="false"
+  [resizable]="false" [closable]="!moving()" [closeOnEscape]="!moving()"
+  [style]="{width: 'min(28rem, 94vw)'}" (visibleChange)="!$event && closeMove()">
+  @if (moveCard(); as card) {
+    <div class="move-form">
+      <p class="text-surface-700">{{ work.getIssueKey(card) }} · {{ card.title }}</p>
+      <label for="move-issue-status">Estado destino</label>
+      <p-select inputId="move-issue-status" ariaLabel="Estado destino" [options]="moveOptions()"
+        [ngModel]="moveTarget()" (ngModelChange)="moveTarget.set($event)" [disabled]="moving()"
+        [fluid]="true" placeholder="Seleccionar estado" appendTo="body" />
+      @if (moveError()) {
+        <p role="alert" class="text-red-700">{{ moveError() }}</p>
+      }
+      <div class="move-footer">
+        <p-button label="Cancelar" severity="secondary" [text]="true" [disabled]="moving()" (onClick)="closeMove()" />
+        <p-button label="Mover incidencia" [disabled]="!moveTarget() || moving()" [loading]="moving()" (onClick)="confirmMove()" />
+      </div>
+    </div>
+  }
+</p-dialog>

@@ -5,11 +5,13 @@ import com.scar.api.domain.entity.*;
 import com.scar.api.domain.enums.*;
 import com.scar.api.repository.*;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.LocalDate;
+import java.nio.charset.StandardCharsets;
 import java.util.Set;
 
 @Configuration
@@ -22,16 +24,31 @@ public class DataInitializer {
         IssueRepository issueRepository,
         IssueDependencyRepository dependencyRepository,
         BoardListRepository boardListRepository,
-        PasswordEncoder passwordEncoder
+        PasswordEncoder passwordEncoder,
+        @Value("${scar.dev.seed-demo:false}") boolean seedDemo,
+        @Value("${scar.bootstrap.admin-password:}") String initialPassword,
+        @Value("${scar.bootstrap.admin-email:administrador@scar.local}") String initialEmail
     ) {
         return args -> {
             if (userRepository.count() > 0) return;
 
-            User admin = user("Administrador", "administrador", "admin@gmail.com", "AD", Set.of(UserRole.ADMIN), passwordEncoder, "password");
-            User chief = user("Sofía Vega", "svega", "sofia.vega@scar.local", "SV", Set.of(UserRole.CHIEF), passwordEncoder, "admin123");
-            User secretary = user("Ana Ríos", "arios", "ana.rios@scar.local", "AR", Set.of(UserRole.SECRETARY), passwordEncoder, "admin123");
-            User staff1 = user("Luis Mendoza", "lmendoza", "luis.mendoza@scar.local", "LM", Set.of(), passwordEncoder, "admin123");
-            User staff2 = user("Marco Aguilar", "maguilar", "marco.aguilar@scar.local", "MA", Set.of(), passwordEncoder, "admin123");
+            if (!seedDemo) {
+                if (initialPassword.isBlank()) return;
+                if (initialPassword.length() < 12 || initialPassword.getBytes(StandardCharsets.UTF_8).length > 72) {
+                    throw new IllegalArgumentException("La contraseña inicial de SCAR debe tener al menos 12 caracteres y hasta 72 bytes");
+                }
+                userRepository.save(user("Administrador", "administrador", initialEmail, "AD", Set.of(UserRole.ADMIN),
+                    passwordEncoder, initialPassword));
+                return;
+            }
+
+            if (initialPassword.isBlank()) throw new IllegalStateException("Define SCAR_BOOTSTRAP_ADMIN_PASSWORD para crear los datos de demostración.");
+
+            User admin = user("Administrador", "administrador", "admin@gmail.com", "AD", Set.of(UserRole.ADMIN), passwordEncoder, initialPassword);
+            User chief = user("Sofía Vega", "svega", "sofia.vega@scar.local", "SV", Set.of(UserRole.CHIEF), passwordEncoder, initialPassword);
+            User secretary = user("Ana Ríos", "arios", "ana.rios@scar.local", "AR", Set.of(UserRole.SECRETARY), passwordEncoder, initialPassword);
+            User staff1 = user("Luis Mendoza", "lmendoza", "luis.mendoza@scar.local", "LM", Set.of(), passwordEncoder, initialPassword);
+            User staff2 = user("Marco Aguilar", "maguilar", "marco.aguilar@scar.local", "MA", Set.of(), passwordEncoder, initialPassword);
             userRepository.saveAll(java.util.List.of(admin, chief, secretary, staff1, staff2));
 
             Project arg = project("ARG", "Plataforma SCAR", "Evolución del ecosistema operativo.", ProjectType.STANDARD, Set.of(admin, chief, staff1));

@@ -1,13 +1,19 @@
 import {inject, Injectable, signal} from '@angular/core';
 import {firstValueFrom} from 'rxjs';
-import {FileUploadResponse, IssueDetailsResponse, WorkApiService} from './work-api.service';
+import {FileUploadResponse, IssueDetailsResponse, WorkActivity, WorkApiService} from './work-api.service';
 import {WorkService} from './work.service';
 import {WorkAttachment, WorkComment, WorkTimeEntry} from '../../features/work/work.models';
+import {environment} from '../../../environments/environment';
+import {IssueFieldValue} from './project-configuration-api.service';
+import {AuthService} from './auth.service';
 
 export interface CardDetailState {
   attachments: WorkAttachment[];
   timeEntries: WorkTimeEntry[];
   comments: WorkComment[];
+  activity: WorkActivity[];
+  customFields: IssueFieldValue[];
+  canEdit: boolean;
   loaded: boolean;
   loading: boolean;
   error: string | null;
@@ -17,6 +23,9 @@ const EMPTY_DETAIL: CardDetailState = {
   attachments: [],
   timeEntries: [],
   comments: [],
+  activity: [],
+  customFields: [],
+  canEdit: false,
   loaded: false,
   loading: false,
   error: null,
@@ -28,13 +37,15 @@ const MAX_CACHED_CARDS = 20;
 export class WorkCardDetailStore {
   private workApi = inject(WorkApiService);
   private workService = inject(WorkService);
+  private readonly auth = inject(AuthService);
 
   private states = signal<Record<string, CardDetailState>>({});
   private inflight = new Map<string, Promise<void>>();
   private accessOrder: string[] = [];
+  private session = this.auth.getToken();
 
   snapshot(cardId: string | null | undefined): CardDetailState {
-    if (!cardId) return EMPTY_DETAIL;
+    if (!cardId || this.auth.getToken() !== this.session) return EMPTY_DETAIL;
     const state = this.states()[cardId];
     if (state) {
       this.markAccessed(cardId);
@@ -43,20 +54,19 @@ export class WorkCardDetailStore {
   }
 
   async load(cardId: string, force = false): Promise<void> {
-    const current = this.snapshot(cardId);
-    if (!force && (current.loaded || current.loading)) {
-      if (current.loading && this.inflight.has(cardId)) {
-        await this.inflight.get(cardId);
-      }
-      return;
-    }
+    if (!environment.useApi) return;
+    this.resetSession();
+    const session = this.session;
+    const existing = this.inflight.get(cardId);
+    if (existing) await existing;
+    if (session !== this.auth.getToken() || (!force && this.snapshot(cardId).loaded)) return;
 
-    const task = this.fetch(cardId);
+    const task = this.fetch(cardId, session);
     this.inflight.set(cardId, task);
     try {
       await task;
     } finally {
-      this.inflight.delete(cardId);
+      if (this.inflight.get(cardId) === task) this.inflight.delete(cardId);
     }
   }
 
@@ -114,15 +124,15 @@ export class WorkCardDetailStore {
     };
   }
 
-  private async fetch(cardId: string): Promise<void> {
+  private async fetch(cardId: string, session: string | null): Promise<void> {
     this.patch(cardId, { ...this.snapshot(cardId), loading: true, error: null });
     try {
       const details = await firstValueFrom(this.workApi.getIssueDetails(cardId));
-      this.applyDetails(cardId, details);
+      if (this.auth.getToken() === session) this.applyDetails(cardId, details);
     } catch {
+      if (this.auth.getToken() !== session) return;
       this.patch(cardId, {
-        ...this.snapshot(cardId),
-        loading: false,
+        ...EMPTY_DETAIL,
         error: 'No se pudieron cargar los detalles',
       });
     }
@@ -133,6 +143,9 @@ export class WorkCardDetailStore {
       attachments: details.attachments,
       timeEntries: details.timeEntries,
       comments: details.comments,
+      activity: details.activity ?? [],
+      customFields: details.customFields ?? [],
+      canEdit: details.canEdit ?? false,
       loaded: true,
       loading: false,
       error: null,
@@ -167,6 +180,7 @@ export class WorkCardDetailStore {
   }
 
   private patch(cardId: string, partial: Partial<CardDetailState>): void {
+    this.resetSession();
     const current = this.snapshot(cardId);
     this.markAccessed(cardId);
     this.states.update(map => {
@@ -182,6 +196,15 @@ export class WorkCardDetailStore {
       }
       return next;
     });
+  }
+
+  private resetSession(): void {
+    const session = this.auth.getToken();
+    if (session === this.session) return;
+    this.session = session;
+    this.states.set({});
+    this.accessOrder = [];
+    this.inflight.clear();
   }
 
   private markAccessed(cardId: string): void {

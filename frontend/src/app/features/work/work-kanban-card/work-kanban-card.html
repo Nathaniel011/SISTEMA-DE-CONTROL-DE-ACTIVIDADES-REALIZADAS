@@ -1,0 +1,41 @@
+<div class="card-top">
+  <div class="card-identity">
+    <span class="card-key">{{ issueKey() }}</span>
+    @if (projectName()) { <span class="card-project" [title]="projectName()">{{ projectName() }}</span> }
+  </div>
+</div>
+@if (showsPriority()) {
+  <span class="card-priority" [class.critical]="card().priority === 'critical'">
+    <i [class]="priority().icon" aria-hidden="true"></i> {{ priority().label }}
+  </span>
+}
+<div class="card-title">
+  <a class="issue-link" [routerLink]="[]" [queryParams]="{...navigationParams(), issue: card().id}" queryParamsHandling="merge" draggable="false">
+    {{ card().title }}
+  </a>
+</div>
+<div class="card-action"><ng-content /></div>
+<div class="card-footer">
+  <div class="card-details">
+    @if (card().dueDate; as deadline) {
+      <span class="card-detail" [class.overdue]="overdue()" [class.due-soon]="dueSoon()"
+        [attr.aria-label]="(overdue() ? 'Vencida el ' : 'Vence el ') + formatDate(deadline)">
+        <i class="pi pi-calendar" aria-hidden="true"></i> <time [attr.datetime]="deadline">{{ formatDate(deadline) }}</time>
+        @if (overdue()) { <span>Vencida</span> }
+      </span>
+    }
+    @if (card().trackedMinutes > 0) {
+      <span class="card-detail card-time" [class]="timeTone()" title="Tiempo registrado">
+        <i class="pi pi-clock" aria-hidden="true"></i> <span class="sr-only">Tiempo registrado</span>{{ formatMinutes(card().trackedMinutes) }}
+      </span>
+    }
+  </div>
+  @if (member(); as owner) {
+    <span class="card-owner" [title]="owner.name">
+      <p-avatar [label]="owner.initials" shape="circle" aria-hidden="true" />
+      <span>{{ owner.name }}</span>
+    </span>
+  } @else {
+    <span class="card-owner unassigned"><i class="pi pi-user" aria-hidden="true"></i><span>Sin asignar</span></span>
+  }
+</div>

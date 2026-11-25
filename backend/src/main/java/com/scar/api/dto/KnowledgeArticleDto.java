@@ -14,5 +14,7 @@ public record KnowledgeArticleDto(
     String authorName,
     String updatedByName,
     String createdAt,
-    String updatedAt
+    String updatedAt,
+    boolean canEdit,
+    boolean projectRemoved
 ) {}

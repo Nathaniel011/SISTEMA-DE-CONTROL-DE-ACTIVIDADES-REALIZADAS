@@ -2,7 +2,9 @@ package com.scar.api.repository;
 
 import com.scar.api.domain.entity.Issue;
 import com.scar.api.domain.enums.IssueColumn;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -28,6 +30,8 @@ public interface IssueRepository extends JpaRepository<Issue, UUID> {
 
     Optional<Issue> findTopByProjectIdOrderByIssueNumberDesc(UUID projectId);
 
+    Optional<Issue> findByProject_KeyCodeAndIssueNumber(String projectKey, int issueNumber);
+
     List<Issue> findByProjectIdAndColumnIdOrderBySortOrder(UUID projectId, IssueColumn columnId);
 
     long countByProjectIdAndColumnId(UUID projectId, IssueColumn columnId);
@@ -36,7 +40,9 @@ public interface IssueRepository extends JpaRepository<Issue, UUID> {
 
     List<Issue> findByParentIssueId(UUID parentIssueId);
 
-    Optional<Issue> findByPublicToken(UUID publicToken);
+    Optional<Issue> findByPublicTokenAndPublicTrackingEnabledTrue(UUID publicToken);
+
+    Optional<Issue> findBySubmissionKey(UUID submissionKey);
 
     @Query("""
         SELECT i FROM Issue i
@@ -46,6 +52,14 @@ public interface IssueRepository extends JpaRepository<Issue, UUID> {
         WHERE i.id = :id
         """)
     Optional<Issue> findByIdWithAccessDetails(@Param("id") UUID id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT i FROM Issue i WHERE i.id = :id")
+    Optional<Issue> findByIdForUpdate(@Param("id") UUID id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT i FROM Issue i WHERE i.id IN :ids ORDER BY i.id")
+    List<Issue> findAllForUpdate(@Param("ids") Collection<UUID> ids);
 
     @Modifying
     @Query("UPDATE Issue i SET i.assignee = NULL WHERE i.assignee.id = :userId")

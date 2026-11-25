@@ -1,258 +1,330 @@
-import {Component, OnInit, computed, inject, signal} from '@angular/core';
+import {HttpErrorResponse} from '@angular/common/http';
+import {afterNextRender, ChangeDetectionStrategy, Component, computed, DestroyRef, effect, ElementRef, inject, Injector, signal, untracked, viewChild} from '@angular/core';
+import {takeUntilDestroyed, toSignal} from '@angular/core/rxjs-interop';
 import {FormsModule} from '@angular/forms';
+import {ActivatedRoute, Router} from '@angular/router';
 import {Button} from 'primeng/button';
+import {Dialog} from 'primeng/dialog';
 import {InputText} from 'primeng/inputtext';
-import {ProgressSpinner} from 'primeng/progressspinner';
 import {Select} from 'primeng/select';
 import {Tag} from 'primeng/tag';
 import {Textarea} from 'primeng/textarea';
-import {firstValueFrom} from 'rxjs';
+import {catchError, firstValueFrom, map, of, Subject, switchMap} from 'rxjs';
 import {environment} from '../../../../environments/environment';
-import {
-  KnowledgeArticle,
-  KnowledgeArticlePayload,
-  WorkApiService,
-} from '../../../core/services/work-api.service';
+import {AuthService} from '../../../core/services/auth.service';
+import {KnowledgeArticle, KnowledgeArticlePayload, WorkApiService} from '../../../core/services/work-api.service';
 import {WorkService} from '../../../core/services/work.service';
+import {debouncedAction} from '../../../core/timing/debounced-action';
+import {WorkPageHeader} from '../work-page-header/work-page-header';
+import {WorkSkeleton} from '../work-skeleton/work-skeleton';
+import {boardDisplayName, formatWorkDate} from '../work.utils';
 
 const STORAGE_KEY = 'scar-knowledge-v1';
+const statuses = [
+  {label: 'Borrador', value: 'draft'},
+  {label: 'Publicado', value: 'published'},
+  {label: 'Archivado', value: 'archived'},
+] as const;
+type Status = KnowledgeArticle['status'];
+type Draft = {title: string; content: string; tags: string; projectId: string | null; status: Status};
+
+function blankDraft(projectId: string | null): Draft {
+  return {title: '', content: '', tags: '', projectId, status: 'draft'};
+}
+
+export function parseKnowledgeTags(value: string): string[] {
+  const tags = new Map<string, string>();
+  for (const token of value.split(',')) {
+    const tag = token.trim();
+    const key = tag.toLocaleLowerCase('es');
+    if (tag && !tags.has(key)) tags.set(key, tag);
+  }
+  return [...tags.values()];
+}
+
+function searchKey(value: string): string {
+  return value.normalize('NFD').replace(/\p{M}/gu, '').toLocaleLowerCase('es');
+}
 
 @Component({
   selector: 'app-work-knowledge',
-  imports: [FormsModule, Button, InputText, ProgressSpinner, Select, Tag, Textarea],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [FormsModule, Button, Dialog, InputText, Select, Tag, Textarea, WorkPageHeader, WorkSkeleton],
   templateUrl: './work-knowledge.html',
+  host: {'(window:beforeunload)': 'warnUnsaved($event)'},
 })
-export class WorkKnowledge implements OnInit {
-  private workApi = inject(WorkApiService);
-  workService = inject(WorkService);
+export class WorkKnowledge {
+  private readonly api = inject(WorkApiService);
+  private readonly auth = inject(AuthService);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
+  private readonly work = inject(WorkService);
+  private readonly injector = inject(Injector);
+  private readonly destroy = inject(DestroyRef);
+  private readonly params = toSignal(this.route.queryParamMap, {initialValue: this.route.snapshot.queryParamMap});
+  private readonly searchDelay = debouncedAction(270);
+  private readonly reload = new Subject<{project: string | null; query: string}>();
+  private readonly localArticles = signal<KnowledgeArticle[]>([]);
+  private readonly original = signal(blankDraft(null));
+  private readonly titleInput = viewChild<ElementRef<HTMLInputElement>>('titleInput');
+  private readonly readerHeading = viewChild<ElementRef<HTMLHeadingElement>>('readerHeading');
+  private discardDecision?: Promise<boolean>;
+  private resolveDiscard?: (allowed: boolean) => void;
 
-  articles = signal<KnowledgeArticle[]>([]);
-  selectedArticleId = signal<string | null>(null);
-  editingNew = signal(false);
-  loading = signal(false);
-  saving = signal(false);
-  query = signal('');
-  selectedBoardId = signal<string | null>(null);
-
-  editorTitle = signal('');
-  editorContent = signal('');
-  editorTags = signal('');
-  editorBoardId = signal<string | null>(null);
-  editorStatus = signal<'draft' | 'published' | 'archived'>('draft');
-
-  boardFilterOptions = computed(() => [
-    { label: 'Todos los tableros', value: null },
-    ...this.workService.boards().map(board => ({ label: board.name, value: board.id })),
+  protected readonly demo = !environment.useApi;
+  protected readonly statusOptions = [...statuses];
+  protected readonly articles = signal<KnowledgeArticle[]>([]);
+  protected readonly selected = signal<KnowledgeArticle | null>(null);
+  protected readonly editing = signal(false);
+  protected readonly draft = signal(blankDraft(null));
+  protected readonly loading = signal(true);
+  protected readonly busy = signal(false);
+  protected readonly loadError = signal(false);
+  protected readonly error = signal('');
+  protected readonly notice = signal('');
+  protected readonly discardOpen = signal(false);
+  protected readonly deleteOpen = signal(false);
+  protected readonly conflict = signal(false);
+  protected readonly query = computed(() => this.params().get('q') ?? '');
+  protected readonly projectFilter = computed(() => this.params().get('board'));
+  protected readonly searchDraft = signal(this.query());
+  protected readonly formatDate = formatWorkDate;
+  protected readonly tags = computed(() => parseKnowledgeTags(this.draft().tags));
+  protected readonly dirty = computed(() => this.editing() && JSON.stringify(this.draft()) !== JSON.stringify(this.original()));
+  private readonly projectOptions = computed(() => this.work.boards().map(board => ({label: boardDisplayName(board), value: board.id})));
+  protected readonly filterOptions = computed(() => [{label: 'Todos los proyectos', value: null}, ...this.projectOptions()]);
+  protected readonly editorOptions = computed(() => [
+    {label: this.selected()?.projectRemoved ? 'Proyecto eliminado' : 'General', value: null},
+    ...this.projectOptions(),
   ]);
 
-  boardEditorOptions = computed(() => [
-    { label: 'General', value: null },
-    ...this.workService.boards().map(board => ({ label: board.name, value: board.id })),
-  ]);
-
-  statusOptions = [
-    { label: 'Borrador', value: 'draft' },
-    { label: 'Publicado', value: 'published' },
-    { label: 'Archivado', value: 'archived' },
-  ];
-
-  visibleArticles = computed(() => {
-    const q = this.query().trim().toLowerCase();
-    const boardId = this.selectedBoardId();
-    return this.articles().filter(article => {
-      const matchesBoard = !boardId || article.projectId === boardId;
-      const matchesQuery = !q
-        || article.title.toLowerCase().includes(q)
-        || article.content.toLowerCase().includes(q)
-        || article.tags.some(tag => tag.toLowerCase().includes(q));
-      return matchesBoard && matchesQuery;
-    });
-  });
-
-  selectedArticle = computed(() =>
-    this.articles().find(article => article.id === this.selectedArticleId()) ?? null
-  );
-
-  ngOnInit(): void {
-    void this.loadArticles();
-  }
-
-  async loadArticles(): Promise<void> {
-    this.loading.set(true);
-    try {
-      if (environment.useApi) {
-        const articles = await firstValueFrom(
-          this.workApi.listKnowledgeArticles(this.selectedBoardId(), this.query())
-        );
-        this.articles.set(articles);
-      } else {
-        this.articles.set(this.loadLocalArticles());
-      }
-      const selected = this.selectedArticleId();
-      const next = selected && this.articles().some(article => article.id === selected)
-        ? this.articles().find(article => article.id === selected)!
-        : this.visibleArticles()[0] ?? null;
-      if (next) {
-        this.selectArticle(next);
-      } else {
-        this.newArticle();
-      }
-    } finally {
+  constructor() {
+    if (this.demo) this.localArticles.set(this.readLocalArticles());
+    this.reload.pipe(
+      switchMap(({project, query}) => {
+        const request = this.demo ? of(this.filterLocal(project, query)) : this.api.listKnowledgeArticles(project, query);
+        return request.pipe(map(articles => ({articles, failed: false})), catchError(() => of({articles: [], failed: true})));
+      }),
+      takeUntilDestroyed(this.destroy),
+    ).subscribe(({articles, failed}) => {
       this.loading.set(false);
-    }
-  }
-
-  selectArticle(article: KnowledgeArticle): void {
-    this.editingNew.set(false);
-    this.selectedArticleId.set(article.id);
-    this.editorTitle.set(article.title);
-    this.editorContent.set(article.content);
-    this.editorTags.set(article.tags.join(', '));
-    this.editorBoardId.set(article.projectId);
-    this.editorStatus.set(article.status);
-  }
-
-  newArticle(): void {
-    this.editingNew.set(true);
-    this.selectedArticleId.set(null);
-    this.editorTitle.set('Nuevo articulo');
-    this.editorContent.set('');
-    this.editorTags.set('');
-    this.editorBoardId.set(this.selectedBoardId());
-    this.editorStatus.set('draft');
-  }
-
-  async saveArticle(): Promise<void> {
-    const title = this.editorTitle().trim();
-    if (!title) {
-      return;
-    }
-    this.saving.set(true);
-    try {
-      const payload: KnowledgeArticlePayload = {
-        projectId: this.editorBoardId(),
-        title,
-        content: this.editorContent(),
-        tags: this.parseTags(this.editorTags()),
-        status: this.editorStatus(),
-      };
-
-      if (environment.useApi) {
-        const saved = this.selectedArticleId()
-          ? await firstValueFrom(this.workApi.updateKnowledgeArticle(this.selectedArticleId()!, payload))
-          : await firstValueFrom(this.workApi.createKnowledgeArticle(payload));
-        this.upsertArticle(saved);
-        this.selectArticle(saved);
-      } else {
-        const saved = this.saveLocalArticle(payload);
-        this.upsertArticle(saved);
-        this.persistLocalArticles();
-        this.selectArticle(saved);
-      }
-    } finally {
-      this.saving.set(false);
-    }
-  }
-
-  async deleteArticle(): Promise<void> {
-    const id = this.selectedArticleId();
-    if (!id) {
-      return;
-    }
-    if (environment.useApi) {
-      await firstValueFrom(this.workApi.deleteKnowledgeArticle(id));
-    }
-    this.articles.set(this.articles().filter(article => article.id !== id));
-    if (!environment.useApi) {
-      this.persistLocalArticles();
-    }
-    const next = this.visibleArticles()[0];
-    if (next) {
-      this.selectArticle(next);
-    } else {
-      this.newArticle();
-    }
-  }
-
-  async applyFilters(): Promise<void> {
-    if (environment.useApi) {
-      await this.loadArticles();
-    }
-  }
-
-  statusLabel(status: string): string {
-    return this.statusOptions.find(option => option.value === status)?.label ?? status;
-  }
-
-  formatDate(value: string): string {
-    return new Date(value).toLocaleDateString('es-ES', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
+      this.loadError.set(failed);
+      this.articles.set(articles);
     });
+    effect(() => {
+      const query = this.query();
+      untracked(() => {
+        this.searchDelay.cancel();
+        this.searchDraft.set(query);
+      });
+    });
+    effect(() => {
+      const project = this.projectFilter();
+      const query = this.query();
+      untracked(() => this.loadArticles(project, query));
+    });
+    this.destroy.onDestroy(() => this.resolveDiscard?.(false));
   }
 
-  parseTags(value: string): string[] {
-    return value.split(',')
-      .map(tag => tag.trim())
-      .filter(Boolean);
+  protected loadArticles(project = this.projectFilter(), query = this.query()): void {
+    this.loading.set(true);
+    this.loadError.set(false);
+    this.reload.next({project, query});
   }
 
-  private upsertArticle(article: KnowledgeArticle): void {
-    this.articles.update(articles =>
-      articles.some(item => item.id === article.id)
-        ? articles.map(item => item.id === article.id ? article : item)
-        : [article, ...articles]
-    );
+  protected search(value: string): void {
+    this.searchDraft.set(value);
+    this.searchDelay.schedule(() => this.updateFilters({q: value.trim() || null}));
   }
 
-  private saveLocalArticle(payload: KnowledgeArticlePayload): KnowledgeArticle {
-    const existing = this.selectedArticle();
-    const now = new Date().toISOString();
-    return {
-      id: existing?.id ?? crypto.randomUUID(),
-      projectId: payload.projectId ?? null,
-      projectName: this.workService.getBoard(payload.projectId ?? '')?.name ?? null,
-      title: payload.title ?? existing?.title ?? 'Articulo',
-      slug: existing?.slug ?? `articulo-${crypto.randomUUID().slice(0, 8)}`,
-      content: payload.content ?? '',
-      tags: payload.tags ?? [],
-      status: payload.status ?? 'draft',
-      authorName: existing?.authorName ?? 'Local',
-      updatedByName: 'Local',
-      createdAt: existing?.createdAt ?? now,
-      updatedAt: now,
-    };
+  protected updateFilters(queryParams: {q?: string | null; board?: string | null}): void {
+    void this.router.navigate([], {relativeTo: this.route, queryParams, queryParamsHandling: 'merge', replaceUrl: true});
   }
 
-  private loadLocalArticles(): KnowledgeArticle[] {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        return JSON.parse(raw) as KnowledgeArticle[];
-      }
-    } catch {
-      /* default */
+  protected async openArticle(article: KnowledgeArticle): Promise<void> {
+    if (this.busy() || !await this.confirmDiscard()) return;
+    this.showArticle(article);
+  }
+
+  protected async newArticle(): Promise<void> {
+    if (this.busy() || !await this.confirmDiscard()) return;
+    this.selected.set(null);
+    this.beginEditing(blankDraft(this.projectFilter()));
+  }
+
+  protected editArticle(): void {
+    const article = this.selected();
+    if (!article?.canEdit || this.busy()) return;
+    this.beginEditing({title: article.title, content: article.content, tags: article.tags.join(', '), projectId: article.projectId, status: article.status});
+  }
+
+  protected changeDraft(patch: Partial<Draft>): void {
+    this.draft.update(value => ({...value, ...patch}));
+  }
+
+  protected async cancelEdit(): Promise<void> {
+    if (this.busy() || !await this.confirmDiscard()) return;
+    this.showArticle(this.selected());
+  }
+
+  protected async saveArticle(): Promise<void> {
+    if (!this.editing() || this.busy()) return;
+    const {title, content, projectId, status} = this.draft();
+    const tags = this.tags();
+    this.error.set('');
+    if (!title.trim()) {
+      this.error.set('Escribe un título para guardar el artículo.');
+      this.titleInput()?.nativeElement.focus();
+      return;
     }
-    const seed: KnowledgeArticle[] = [{
-      id: crypto.randomUUID(),
-      projectId: null,
-      projectName: null,
-      title: 'Guia operativa',
-      slug: 'guia-operativa',
-      content: 'Documenta decisiones, procedimientos y soluciones reutilizables del equipo.',
-      tags: ['operacion'],
-      status: 'published',
-      authorName: 'Local',
-      updatedByName: 'Local',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }];
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(seed));
-    return seed;
+    if (tags.length > 30 || tags.some(tag => tag.length > 64)) {
+      this.error.set('Usa hasta 30 etiquetas de 64 caracteres cada una.');
+      return;
+    }
+    const previous = this.selected();
+    const payload: KnowledgeArticlePayload = {title: title.trim(), content, tags, projectId, status,
+      clearProject: !!previous?.projectId && projectId === null, expectedUpdatedAt: previous?.updatedAt};
+    this.busy.set(true);
+    try {
+      const saved = this.demo ? this.saveLocal(payload, previous) : await firstValueFrom(previous
+        ? this.api.updateKnowledgeArticle(previous.id, payload) : this.api.createKnowledgeArticle(payload));
+      this.showArticle(saved);
+      this.notice.set('Artículo guardado.');
+      this.loadArticles();
+    } catch (error) {
+      const stale = error instanceof HttpErrorResponse && error.status === 409;
+      this.conflict.set(stale);
+      this.error.set(stale ? 'El artículo cambió en otra sesión. Tu borrador sigue aquí.' : this.message(error, 'No se pudo guardar el artículo. Tu borrador sigue aquí.'));
+    } finally {
+      this.busy.set(false);
+    }
   }
 
-  private persistLocalArticles(): void {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(this.articles()));
+  protected async reloadSelected(): Promise<void> {
+    const article = this.selected();
+    if (!article || this.busy() || !await this.confirmDiscard()) return;
+    this.busy.set(true);
+    try {
+      this.showArticle(await firstValueFrom(this.api.getKnowledgeArticle(article.id)));
+      this.loadArticles();
+    } catch (error) {
+      this.error.set(this.message(error, 'No se pudo abrir la versión actual.'));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  protected async deleteArticle(): Promise<void> {
+    const article = this.selected();
+    if (!article?.canEdit || this.busy()) return;
+    this.busy.set(true);
+    this.error.set('');
+    try {
+      if (this.demo) this.writeLocalArticles(this.localArticles().filter(item => item.id !== article.id));
+      else await firstValueFrom(this.api.deleteKnowledgeArticle(article.id));
+      this.deleteOpen.set(false);
+      this.showArticle(null);
+      this.notice.set('Artículo eliminado.');
+      this.loadArticles();
+    } catch (error) {
+      this.deleteOpen.set(false);
+      this.error.set(this.message(error, 'No se pudo eliminar el artículo.'));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  canLeave(): boolean | Promise<boolean> {
+    return !this.busy() && this.confirmDiscard();
+  }
+
+  protected warnUnsaved(event: BeforeUnloadEvent): void {
+    if (!this.auth.isAuthenticated() || (!this.dirty() && !this.busy())) return;
+    event.preventDefault();
+    event.returnValue = '';
+  }
+
+  protected answerDiscard(allowed: boolean): void {
+    this.discardOpen.set(false);
+    this.resolveDiscard?.(allowed);
+  }
+
+  private confirmDiscard(): boolean | Promise<boolean> {
+    if (!this.dirty()) return true;
+    if (!this.discardDecision) {
+      this.discardOpen.set(true);
+      this.discardDecision = new Promise<boolean>(resolve => this.resolveDiscard = resolve).finally(() => {
+        this.discardDecision = undefined;
+        this.resolveDiscard = undefined;
+      });
+    }
+    return this.discardDecision;
+  }
+
+  private clearMessages(): void {
+    this.conflict.set(false);
+    this.error.set('');
+    this.notice.set('');
+  }
+
+  private showArticle(article: KnowledgeArticle | null): void {
+    this.clearMessages();
+    this.selected.set(article);
+    this.editing.set(false);
+    afterNextRender(() => this.readerHeading()?.nativeElement.focus(), {injector: this.injector});
+  }
+
+  private beginEditing(draft: Draft): void {
+    this.clearMessages();
+    this.original.set(draft);
+    this.draft.set(draft);
+    this.editing.set(true);
+    afterNextRender(() => this.titleInput()?.nativeElement.focus(), {injector: this.injector});
+  }
+
+  protected statusLabel(status: Status): string {
+    return statuses.find(item => item.value === status)?.label ?? status;
+  }
+
+  protected scopeLabel(article: KnowledgeArticle): string {
+    return article.projectRemoved ? 'Proyecto eliminado' : article.projectName ?? 'General';
+  }
+
+  private message(error: unknown, fallback: string): string {
+    return error instanceof HttpErrorResponse && typeof error.error?.message === 'string' ? error.error.message : fallback;
+  }
+
+  private filterLocal(project: string | null, query: string): KnowledgeArticle[] {
+    const text = searchKey(query);
+    return this.localArticles().filter(article => (!project || article.projectId === project)
+      && searchKey([article.title, article.content, ...article.tags].join(' ')).includes(text));
+  }
+
+  private readLocalArticles(): KnowledgeArticle[] {
+    try {
+      const articles = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]') as KnowledgeArticle[];
+      if (!Array.isArray(articles)) return [];
+      return articles.filter(article => typeof article?.title === 'string' && typeof article.id === 'string')
+        .map(article => ({...article, content: article.content ?? '', tags: Array.isArray(article.tags) ? article.tags : [], canEdit: true, projectRemoved: false}));
+    } catch {
+      return [];
+    }
+  }
+
+  private saveLocal(payload: KnowledgeArticlePayload, previous: KnowledgeArticle | null): KnowledgeArticle {
+    const now = new Date().toISOString();
+    const id = previous?.id ?? crypto.randomUUID();
+    const article: KnowledgeArticle = {id, projectId: payload.projectId ?? null, canEdit: true, projectRemoved: false,
+      projectName: this.work.getBoard(payload.projectId ?? '')?.name ?? null,
+      title: payload.title ?? '', slug: previous?.slug ?? `articulo-${id.slice(0, 8)}`, content: payload.content ?? '',
+      tags: payload.tags ?? [], status: payload.status ?? 'draft', authorName: previous?.authorName ?? 'Local',
+      updatedByName: 'Local', createdAt: previous?.createdAt ?? now, updatedAt: now};
+    this.writeLocalArticles([article, ...this.localArticles().filter(item => item.id !== id)]);
+    return article;
+  }
+
+  private writeLocalArticles(articles: KnowledgeArticle[]): void {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(articles));
+    this.localArticles.set(articles);
   }
 }

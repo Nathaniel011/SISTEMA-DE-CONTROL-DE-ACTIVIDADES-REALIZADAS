@@ -5,10 +5,13 @@ import com.scar.api.dto.KnowledgeArticleRequest;
 import com.scar.api.security.ScarPrincipal;
 import com.scar.api.service.KnowledgeService;
 import jakarta.validation.Valid;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -19,6 +22,12 @@ public class KnowledgeController {
 
     public KnowledgeController(KnowledgeService knowledgeService) {
         this.knowledgeService = knowledgeService;
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    ResponseEntity<Map<String, String>> knowledgeError(ResponseStatusException error) {
+        String message = error.getReason() == null ? "No se pudo completar la operación" : error.getReason();
+        return ResponseEntity.status(error.getStatusCode()).body(Map.of("message", message));
     }
 
     @GetMapping

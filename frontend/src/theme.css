@@ -1,0 +1,69 @@
+@custom-variant dark (&:where(.scar-dark, .scar-dark *));
+
+/* Existing templates use Tailwind's numeric colors for panels, borders and text.
+   Give those utilities their own aliases so PrimeNG retains its native scales. */
+@theme static {
+  --color-surface-0: var(--p-surface-0);
+  --color-surface-50: var(--p-surface-50);
+  --color-surface-100: var(--p-surface-100);
+  --color-surface-200: var(--p-surface-200);
+  --color-surface-300: var(--p-surface-300);
+  --color-surface-400: var(--p-surface-400);
+  --color-surface-500: var(--p-surface-500);
+  --color-surface-600: var(--p-surface-600);
+  --color-surface-700: var(--p-surface-700);
+  --color-surface-800: var(--p-surface-800);
+  --color-surface-900: var(--p-surface-900);
+  --color-surface-950: var(--p-surface-950);
+  --color-primary-50: var(--p-primary-50);
+  --color-primary-100: var(--p-primary-100);
+  --color-primary-200: var(--p-primary-200);
+  --color-primary-300: var(--p-primary-300);
+  --color-primary-400: var(--p-primary-400);
+  --color-primary-500: var(--p-primary-500);
+  --color-primary-600: var(--p-primary-600);
+  --color-primary-700: var(--p-primary-700);
+  --color-primary-800: var(--p-primary-800);
+  --color-primary-900: var(--p-primary-900);
+  --color-primary-950: var(--p-primary-950);
+}
+
+html.scar-dark {
+  --color-surface-0: var(--p-content-background);
+  --color-surface-50: var(--p-surface-800);
+  --color-surface-100: var(--p-surface-950);
+  --color-surface-200: var(--p-content-border-color);
+  --color-surface-300: var(--p-surface-600);
+  --color-surface-400: var(--p-surface-400);
+  --color-surface-500: var(--p-text-muted-color);
+  --color-surface-600: var(--p-surface-300);
+  --color-surface-700: var(--p-text-color);
+  --color-surface-800: var(--p-surface-100);
+  --color-surface-900: var(--p-surface-50);
+  --color-surface-950: var(--p-surface-0);
+  --color-primary-50: color-mix(in srgb, var(--p-primary-400) 10%, var(--p-content-background));
+  --color-primary-100: color-mix(in srgb, var(--p-primary-400) 18%, var(--p-content-background));
+  --color-primary-200: var(--p-primary-800);
+  --color-primary-300: var(--p-primary-700);
+  --color-primary-400: var(--p-primary-400);
+  --color-primary-600: var(--p-primary-400);
+  --color-primary-700: var(--p-primary-300);
+  --color-primary-800: var(--p-primary-200);
+  --color-primary-900: var(--p-primary-100);
+}
+
+/* Navigation keeps light lettering on the SCAR teal in both appearances. */
+.sidebar, .sidebar-popup-menu {
+  --color-surface-0: var(--p-track-0);
+  --color-surface-400: var(--p-track-300);
+  --color-surface-700: var(--p-track-700);
+  --color-surface-800: var(--p-track-800);
+  --color-surface-900: var(--p-track-900);
+}
+
+.scar-dark :is(.sidebar, .sidebar-popup-menu) {
+  --color-primary-500: var(--p-primary-900);
+  --color-surface-700: var(--p-primary-700);
+  --color-surface-800: var(--p-primary-900);
+  --color-surface-900: color-mix(in srgb, var(--p-primary-950) 48%, var(--p-surface-950));
+}

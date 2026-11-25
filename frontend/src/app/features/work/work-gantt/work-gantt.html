@@ -1,231 +1,383 @@
-<div class="yt-content yt-content-standalone">
-  <div class="yt-content-header flex-wrap gap-3">
-    <div>
-      <h1 class="yt-content-title m-0">Diagramas de Gantt</h1>
-      @if (projectMeta(); as meta) {
-        <p class="text-surface-500 m-0 mt-1 text-sm">
-          {{ meta.name }} · Inicio {{ meta.start | date:'d MMM y':'':'es' }} · Fin {{ meta.end | date:'d MMM y':'':'es' }}
-          @if (meta.duration) { · Duración {{ meta.duration }} }
-        </p>
-      } @else {
-        <p class="text-surface-500 m-0 mt-1">Planificación semanal y dependencias entre incidencias</p>
-      }
-    </div>
-    <div class="flex items-center gap-2 flex-wrap">
-      <p-select
-        [options]="boardOptions()"
-        [ngModel]="selectedBoardId()"
-        (ngModelChange)="onBoardChange($event)"
-        placeholder="Tablero"
-        optionLabel="label"
-        optionValue="value"
-        class="w-56"
-      />
-      <p-datepicker
-        [ngModel]="weekPicker()"
-        (ngModelChange)="weekPicker.set($event)"
-        dateFormat="dd/mm/yy"
-        [showIcon]="true"
-        placeholder="Semana del plan"
-        class="w-44"
-      />
-      <p-button label="Hoy" icon="pi pi-calendar" severity="secondary" (onClick)="scrollToToday()" />
-      <p-button
-        label="Recalcular"
-        icon="pi pi-refresh"
-        severity="secondary"
-        [loading]="recalculating()"
-        [disabled]="selectedBoardId() === '__all__'"
-        (onClick)="recalculate()"
-      />
-      <p-button
-        label="Exportar Excel"
-        icon="pi pi-file-excel"
-        [loading]="exporting()"
-        (onClick)="exportWeeklyPlan()"
-      />
-      <p-button label="Incidencias" icon="pi pi-list" severity="secondary" routerLink="/work/issues" />
-    </div>
-  </div>
+<main class="yt-content yt-content-standalone flex min-w-0 flex-col gap-4" aria-labelledby="gantt-title">
+  <app-work-page-header headingId="gantt-title" [title]="title()" [description]="description()" icon="pi pi-chart-bar">
+    @if (plan()?.editable) {
+      <p-button label="Configuración" ariaLabel="Configuración del diagrama" icon="pi pi-cog" severity="secondary" [outlined]="true"
+        [disabled]="busy()" (onClick)="openSettings(plan())" />
+    }
+    <p-button label="Nuevo diagrama" ariaLabel="Nuevo diagrama" icon="pi pi-plus" [disabled]="demo || !availableProjects().length || busy()"
+      (onClick)="openSettings()" />
+  </app-work-page-header>
 
-  @if (loading()) {
-    <div class="flex justify-center py-16">
-      <p-progressSpinner />
-    </div>
-  } @else if (!visibleRows().length) {
-    <div class="yt-placeholder">
-      <i class="pi pi-calendar yt-placeholder-icon"></i>
-      <p class="text-surface-500 m-0">No hay incidencias programadas en este tablero.</p>
-    </div>
-  } @else {
-    <div class="gantt-yt border border-surface-200 rounded-xl overflow-hidden bg-surface-0">
-      <div class="gantt-yt-header grid" style="grid-template-columns: minmax(18rem, 22rem) 1fr;">
-        <div class="gantt-yt-table-head grid grid-cols-[1fr_4.5rem_5.5rem] text-xs font-semibold text-surface-500 bg-surface-50 border-b border-r border-surface-200">
-          <span class="px-3 py-2">Resumen de incidencia</span>
-          <span class="px-2 py-2 border-l border-surface-200">Estimación</span>
-          <span class="px-2 py-2 border-l border-surface-200">Fecha de inicio</span>
-        </div>
-        <div #timelineScroll class="gantt-yt-timeline-head overflow-x-auto border-b border-surface-200 bg-surface-50">
-          <div [style.width.px]="timelineWidth()">
-            <div class="flex border-b border-surface-200 text-xs font-semibold text-surface-500">
-              @for (group of weekGroups(); track group.label) {
-                <div
-                  class="text-center py-1 border-r border-surface-200"
-                  [style.width.px]="group.span * 42"
-                >
-                  {{ group.label }}
-                </div>
-              }
-            </div>
-            <div class="flex text-[11px] text-surface-500">
-              @for (day of dayColumns(); track day.iso) {
-                <div
-                  class="text-center py-1 border-r border-surface-100 shrink-0"
-                  [class.gantt-yt-weekend]="day.isWeekend"
-                  [class.font-semibold]="day.isToday"
-                  [class.text-primary]="day.isToday"
-                  [style.width.px]="42"
-                >
-                  {{ day.dayLabel }}
-                </div>
-              }
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="gantt-yt-body grid max-h-[calc(100vh-18rem)] overflow-y-auto" style="grid-template-columns: minmax(18rem, 22rem) 1fr;">
-        <div class="gantt-yt-table border-r border-surface-200">
-          @for (row of visibleRows(); track row.id) {
-            <div
-              class="gantt-yt-table-row grid grid-cols-[1fr_4.5rem_5.5rem] border-b border-surface-100 text-sm"
-              [class.gantt-yt-section-project]="row.rowType === 'PROJECT'"
-              [class.gantt-yt-section-list]="row.rowType === 'LIST'"
-              [style.height.px]="44"
-            >
-              <div class="px-2 py-2 flex items-center gap-1 min-w-0" [style.padding-left.rem]="0.75 + row.depth * 1">
-                @if (row.hasChildren) {
-                  <button type="button" class="gantt-yt-toggle" (click)="toggleCollapse(row.id)">
-                    <i class="pi" [class.pi-chevron-down]="!collapsedIds().has(row.id)" [class.pi-chevron-right]="collapsedIds().has(row.id)"></i>
-                  </button>
-                } @else {
-                  <span class="w-4"></span>
-                }
-                @if (row.key && row.rowType === 'TASK') {
-                  <span class="font-mono text-xs text-surface-500 shrink-0">{{ row.key }}</span>
-                }
-                <span class="truncate" [class.font-semibold]="row.isSection" [title]="row.title">{{ row.title }}</span>
-              </div>
-              <div class="px-2 py-2 border-l border-surface-100 text-xs text-surface-600 flex items-center">{{ row.estimateLabel }}</div>
-              <div class="px-2 py-2 border-l border-surface-100 text-xs text-surface-600 flex items-center">{{ row.startLabel }}</div>
-            </div>
-          }
-        </div>
-
-        <div class="gantt-yt-timeline overflow-x-auto overflow-y-hidden">
-          <div class="relative" [style.width.px]="timelineWidth()" [style.height.px]="visibleRows().length * 44">
-            @for (day of dayColumns(); track day.iso; let i = $index) {
-              @if (day.isWeekend) {
-                <div
-                  class="gantt-yt-weekend-col absolute top-0 bottom-0"
-                  [style.left.px]="i * 42"
-                  [style.width.px]="42"
-                ></div>
-              }
-            }
-            @if (todayLeftPx(); as todayX) {
-              <div class="gantt-yt-today-line absolute top-0 bottom-0" [style.left.px]="todayX"></div>
-            }
-            <svg class="absolute inset-0 pointer-events-none gantt-yt-links" [attr.width]="timelineWidth()" [attr.height]="visibleRows().length * 44">
-              @for (path of linkPaths(); track path.id) {
-                <path [attr.d]="path.d" fill="none" stroke="var(--p-surface-400)" stroke-width="1.5" marker-end="url(#gantt-arrow)" />
-              }
-              <defs>
-                <marker id="gantt-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-                  <path d="M0,0 L6,3 L0,6 Z" fill="var(--p-surface-400)" />
-                </marker>
-              </defs>
-            </svg>
-            @for (row of visibleRows(); track row.id; let i = $index) {
-              <div class="gantt-yt-track absolute left-0 right-0 border-b border-surface-100" [style.top.px]="i * 44" [style.height.px]="44">
-                <div
-                  class="gantt-bar absolute top-1/2 -translate-y-1/2 rounded shadow-sm overflow-hidden touch-none text-[10px] flex items-center px-1 truncate"
-                  [class.h-6]="!row.isSection"
-                  [class.h-4]="row.isSection"
-                  [class.cursor-grab]="!row.isSection"
-                  [class.opacity-80]="row.isSection"
-                  [class.ring-2]="savingTaskId() === row.id"
-                  [class.ring-primary-300]="savingTaskId() === row.id"
-                  [style.left.px]="row.leftPx"
-                  [style.width.px]="row.widthPx"
-                  [style.background]="row.barColor"
-                  [title]="row.title"
-                  (pointerdown)="beginTaskEdit($event, row, 'move')"
-                >
-                  @if (!row.isSection) {
-                    <button type="button" class="gantt-resize-handle left-0" (pointerdown)="beginTaskEdit($event, row, 'resize-start')"></button>
-                    <span class="truncate pointer-events-none text-white">{{ row.key }} {{ row.title }}</span>
-                    <div class="absolute inset-y-0 left-0 opacity-30" [style.width.%]="row.progress" style="background: rgba(0,0,0,.25)"></div>
-                    <button type="button" class="gantt-resize-handle right-0" (pointerdown)="beginTaskEdit($event, row, 'resize-end')"></button>
-                  }
-                </div>
-              </div>
-            }
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="mt-6 border border-surface-200 rounded-xl p-4 bg-surface-0">
-      <div class="flex items-center justify-between gap-3 mb-4">
-        <h2 class="text-base font-semibold m-0">Dependencias</h2>
-        <p-tag [value]="(gantt()?.links?.length ?? 0) + ' enlaces'" severity="secondary" />
-      </div>
-      <div class="grid grid-cols-1 lg:grid-cols-[1fr_1fr_12rem_auto] gap-3 mb-4">
-        <p-select
-          [options]="taskOptions()"
-          [ngModel]="dependencySourceId()"
-          (ngModelChange)="dependencySourceId.set($event)"
-          placeholder="Depende de"
-          optionLabel="label"
-          optionValue="value"
-          class="w-full"
-        />
-        <p-select
-          [options]="taskOptions()"
-          [ngModel]="dependencyTargetId()"
-          (ngModelChange)="dependencyTargetId.set($event)"
-          placeholder="Incidencia bloqueada"
-          optionLabel="label"
-          optionValue="value"
-          class="w-full"
-        />
-        <p-select
-          [options]="dependencyTypeOptions"
-          [ngModel]="dependencyType()"
-          (ngModelChange)="dependencyType.set($event)"
-          optionLabel="label"
-          optionValue="value"
-          class="w-full"
-        />
-        <p-button icon="pi pi-link" label="Vincular" [disabled]="!canAddDependency()" [loading]="savingDependency()" (onClick)="addDependency()" />
-      </div>
-      @if (gantt()?.links?.length) {
-        <ul class="m-0 p-0 list-none flex flex-col gap-2">
-          @for (link of gantt()!.links; track link.id) {
-            <li class="text-sm text-surface-600 flex items-center gap-2 rounded-lg bg-surface-50 px-3 py-2">
-              <i class="pi pi-link text-primary"></i>
-              <span class="truncate">{{ taskLabel(link.source) }}</span>
-              <i class="pi pi-arrow-right text-xs"></i>
-              <span class="truncate">{{ taskLabel(link.target) }}</span>
-              <p-tag [value]="link.type" severity="contrast" />
-              <p-button icon="pi pi-trash" severity="danger" [text]="true" [rounded]="true" class="ml-auto" (onClick)="removeDependency(link.id)" />
-            </li>
-          }
-        </ul>
-      } @else {
-        <div class="text-sm text-surface-500 py-4">Sin dependencias registradas.</div>
-      }
+  @if (demo) { <p class="m-0 rounded-lg bg-primary-50 px-3 py-2 text-sm text-primary-900">Modo demostración · Los diagramas guardados necesitan la API de SCAR.</p> }
+  @if (plansError()) {
+    <div class="flex flex-wrap items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900" role="status">
+      No se pudo cargar la lista de diagramas.
+      <p-button label="Reintentar" ariaLabel="Reintentar diagramas guardados" size="small" severity="secondary" [text]="true" (onClick)="loadPlans()" />
     </div>
   }
-</div>
+
+  <section class="gantt-controls" aria-label="Herramientas del diagrama">
+    <div class="gantt-toolbar">
+      <p-select class="gantt-selector" ariaLabel="Diagrama" [options]="planOptions()" [ngModel]="planId() ?? 'projects'"
+        (ngModelChange)="selectPlan($event)" appendTo="body" />
+      @if (!planId()) {
+        <p-select class="gantt-selector" ariaLabel="Proyecto" [options]="projectOptions()" [ngModel]="projectId()"
+          (ngModelChange)="selectProject($event)" appendTo="body" />
+      }
+      <input pInputText type="search" class="gantt-search" aria-label="Buscar en el diagrama" placeholder="Buscar incidencia o responsable"
+        [value]="query()" (input)="search($any($event.target).value)" />
+      <div class="gantt-commands">
+        @if (plan()?.editable) {
+          <p-button label="Añadir incidencias" ariaLabel="Añadir incidencias" icon="pi pi-list-check" severity="secondary" [outlined]="true" size="small"
+            [disabled]="busy() || loading() || !!error()" (onClick)="openPicker()" />
+        }
+        @if (!planId() || plan()?.editable) {
+          <p-button label="Nueva incidencia" ariaLabel="Nueva incidencia" icon="pi pi-plus" severity="secondary" [outlined]="true" size="small"
+            [disabled]="busy() || loading() || !!error() || !permittedProjectIds().length" (onClick)="openNewIssue()" />
+        }
+        @if (canRecalculate()) {
+          <p-button label="Recalcular" ariaLabel="Recalcular cronograma" icon="pi pi-refresh" severity="secondary" [text]="true" size="small"
+            [disabled]="busy() || loading() || !tasks().length" (onClick)="recalculate()" />
+        }
+        <p-button label="Dependencias" ariaLabel="Gestionar dependencias" icon="pi pi-link" severity="secondary" [text]="true" size="small"
+          [disabled]="demo || loading() || !tasks().length" (onClick)="dependencyOpen.set(true)" />
+      </div>
+    </div>
+    <div class="gantt-toolbar border-t border-surface-200">
+      <div class="gantt-dates" aria-label="Intervalo visible">
+        <p-button icon="pi pi-chevron-left" ariaLabel="Intervalo anterior" [text]="true" severity="secondary" size="small" (onClick)="shiftDate(-1)" />
+        <span class="whitespace-nowrap font-semibold">{{ displayedRange() }}</span>
+        <p-button icon="pi pi-chevron-right" ariaLabel="Intervalo siguiente" [text]="true" severity="secondary" size="small" (onClick)="shiftDate(1)" />
+        <p-button label="Hoy" ariaLabel="Ir a hoy" [text]="true" severity="secondary" size="small" (onClick)="today()" />
+        <p-button label="Inicio" ariaLabel="Ir al inicio del plan" [text]="true" severity="secondary" size="small" (onClick)="fitStart()" />
+      </div>
+      <div class="gantt-scales" role="group" aria-label="Escala de tiempo">
+        @for (option of scales; track option[0]) {
+          <button type="button" [attr.aria-pressed]="scale() === option[0]" (click)="setScale(option[0])">{{ option[1].label }}</button>
+        }
+      </div>
+      @if (!planId()) {
+        <a class="text-sm font-semibold text-primary-800 hover:underline" routerLink="/work/planning"
+          [queryParams]="{board: projectId() === 'all' ? null : projectId()}">Plan semanal y Excel</a>
+      }
+    </div>
+  </section>
+
+  @if (actionError()) { <p role="alert" class="m-0 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{{ actionError() }}</p> }
+  @if (notice()) { <p role="status" class="m-0 rounded-lg bg-primary-50 px-3 py-2 text-sm text-primary-900">{{ notice() }}</p> }
+  @if (!loading() && conflicts().issues.size) {
+    <div role="status" class="flex flex-wrap gap-x-4 gap-y-1 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+      <strong>{{ conflicts().issues.size }} {{ conflicts().issues.size === 1 ? 'incidencia con conflicto' : 'incidencias con conflictos' }}</strong>
+      @if (conflicts().dependencies.size) { <span>Dependencias incumplidas · {{ conflicts().dependencies.size }}</span> }
+      @if (conflicts().overCapacityDays) { <span>Días sobre la capacidad · {{ conflicts().overCapacityDays }}</span> }
+      @if (conflicts().overAssigneeDays) { <span>Días de sobrecarga por responsable · {{ conflicts().overAssigneeDays }}</span> }
+    </div>
+  }
+  @if (linkFrom() && !dependencyOpen() && !draggingLink()) {
+    <div class="flex flex-wrap items-center gap-2 rounded-lg bg-primary-50 px-3 py-2 text-sm text-primary-900" role="status">
+      Selecciona la incidencia que dependerá de {{ taskFor(linkFrom()!)?.key }}.
+      <p-button label="Cancelar vínculo" ariaLabel="Cancelar vínculo" size="small" [text]="true" (onClick)="cancelLink()" />
+    </div>
+  }
+
+  @if (loading()) {
+    <app-work-skeleton label="Cargando diagrama…" />
+  } @else if (error()) {
+    <div class="yt-placeholder" role="alert">
+      <p class="text-surface-700">{{ error() }}</p>
+      <p-button label="Reintentar" ariaLabel="Reintentar cargar diagrama" icon="pi pi-refresh" [outlined]="true" (onClick)="retry()" />
+    </div>
+  } @else if (!tasks().length || !rows().length) {
+    <div class="gantt-empty">
+      <i class="pi pi-chart-bar text-xl text-primary-700" aria-hidden="true"></i>
+      @if (query()) {
+        <h2>No hay coincidencias</h2>
+        <p-button label="Limpiar búsqueda" ariaLabel="Limpiar búsqueda" [text]="true" (onClick)="search('')" />
+      } @else {
+        <h2>El diagrama aún no tiene incidencias</h2>
+        @if (plan()?.editable) { <p-button label="Añadir incidencias" ariaLabel="Añadir incidencias al diagrama vacío" [text]="true" (onClick)="openPicker()" /> }
+      }
+    </div>
+  } @else {
+    <div class="gantt-summary">
+      <span>{{ tasks().length }} incidencias · {{ chart()?.durationLabel || 'Sin duración calculada' }}</span>
+      <span><i class="pi pi-lock" aria-hidden="true"></i> Fecha fijada</span>
+      <span><i class="pi pi-flag" aria-hidden="true"></i> Vencimiento</span>
+      <span><span class="gantt-dot" data-tone="open"></span> Planificada</span>
+      <span><span class="gantt-dot" data-tone="resolved"></span> Resuelta</span>
+      <span><span class="gantt-dot" data-tone="late"></span> Superó la estimación</span>
+    </div>
+
+    <div #scroller class="gantt-sheet" role="region" aria-label="Cronograma de incidencias" tabindex="0" (scroll)="scrollRows($event)"
+      [style.--timeline-width]="timelineWidth() + 'px'" [style.--gantt-day]="pixels() + 'px'" [style.--gantt-row]="rowHeight + 'px'">
+      <div class="gantt-frame">
+        <div class="gantt-grid gantt-heading">
+          <div class="gantt-label gantt-label-head"><strong>Incidencia</strong><span>Estimación y responsable</span></div>
+          <div class="gantt-timeline-head">
+            @for (tick of ticks(); track tick.day) {
+              <span class="gantt-tick" [style.left.px]="tick.left">{{ tick.label }}</span>
+            }
+          </div>
+        </div>
+
+        <div class="gantt-body">
+          <div class="gantt-underlay" aria-hidden="true">
+            @for (x of weekends(); track x) { <span class="gantt-weekend" [style.left.px]="x"></span> }
+            @for (tick of ticks(); track tick.day) { <span class="gantt-guide" [style.left.px]="tick.left"></span> }
+            @if (todayOffset() !== null) { <span class="gantt-now" [style.left.px]="todayOffset()"></span> }
+          </div>
+          <svg class="gantt-connections" aria-hidden="true" [attr.width]="timelineWidth()" [attr.height]="rows().length * rowHeight">
+            <defs>
+              <marker id="scar-gantt-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
+                <path d="M0,0 L6,3 L0,6 Z" fill="var(--p-text-muted-color)" />
+              </marker>
+            </defs>
+            @for (path of paths(); track path.id) {
+              <path [attr.d]="path.d" [class.gantt-link-conflict]="path.broken" class="gantt-link" marker-end="url(#scar-gantt-arrow)" />
+            }
+          </svg>
+          <div aria-hidden="true" [style.height.px]="rowWindow().first * rowHeight"></div>
+          @for (row of rowWindow().items; track row.task.id) {
+            @let task = row.task;
+            @let section = task.rowType === 'PROJECT' || task.rowType === 'LIST';
+            <div class="gantt-grid gantt-task-row" [class.gantt-group]="section" [class.gantt-row-conflict]="conflicts().issues.has(task.id)"
+              [class.gantt-target]="canLinkTo(task.id)" [attr.data-gantt-task]="section ? null : task.id">
+              <div class="gantt-label gantt-task-label" [style.--indent]="row.depth">
+                @if (task.hasChildren) {
+                  <button type="button" class="gantt-icon gantt-toggle" [attr.aria-expanded]="!collapsed().has(task.id)"
+                    [attr.aria-label]="(collapsed().has(task.id) ? 'Expandir ' : 'Contraer ') + task.title" (click)="toggle(task.id)">
+                    <i [class]="collapsed().has(task.id) ? 'pi pi-chevron-right' : 'pi pi-chevron-down'" aria-hidden="true"></i>
+                  </button>
+                }
+                <div class="min-w-0 grow">
+                  @if (section) {
+                    <strong class="block truncate" [title]="task.title">{{ task.title }}</strong>
+                  } @else {
+                    <a class="block truncate font-semibold text-primary-900 hover:underline" [routerLink]="['/work/issues', task.id]"
+                      [queryParams]="taskPageContext()" [title]="task.title">
+                      <span class="mr-1 font-mono text-xs text-primary-800">{{ task.key }}</span>{{ task.title }}
+                    </a>
+                    <div class="gantt-task-meta">
+                      @if (conflicts().issues.has(task.id)) { <i class="pi pi-exclamation-triangle text-amber-800" title="Conflicto de planificación" aria-label="Conflicto de planificación"></i> }
+                      @if (task.pinned) { <i class="pi pi-lock" title="Fecha fijada" aria-label="Fecha fijada"></i> }
+                      <span>{{ estimateLabel(task.estimateMinutes) }} · {{ task.assigneeName || 'Sin asignar' }}</span>
+                    </div>
+                  }
+                </div>
+                @if (!section) {
+                  @if (row.outside && row.range) {
+                    <button type="button" class="gantt-icon" [attr.aria-label]="'Ir a las fechas de ' + task.key"
+                      title="Ir a las fechas" (click)="goDate(row.range.start - 2)">
+                      <i [class]="row.outside === 'left' ? 'pi pi-arrow-left' : 'pi pi-arrow-right'" aria-hidden="true"></i>
+                    </button>
+                  }
+                  @if (canLinkTo(task.id)) {
+                    <button type="button" class="gantt-icon" [attr.aria-label]="'Vincular con ' + task.key" [disabled]="busy()" (click)="addLink(task.id)">
+                      <i class="pi pi-link" aria-hidden="true"></i>
+                    </button>
+                  } @else if (task.canEdit) {
+                    <button type="button" class="gantt-icon" [attr.aria-label]="'Editar planificación de ' + task.key" [disabled]="busy()"
+                      title="Editar planificación" (click)="openEditor(task)">
+                      <i class="pi pi-pencil" aria-hidden="true"></i>
+                    </button>
+                  }
+                }
+              </div>
+              <div class="gantt-track" (dblclick)="!section && pickDate($event, row)">
+                @if (dueOffset(task) !== null) {
+                  <i class="pi pi-flag gantt-due" [style.left.px]="dueOffset(task)" [title]="'Vence ' + dateLabel(task.dueDate)" aria-hidden="true"></i>
+                }
+                @if (row.bar; as bar) {
+                  <div class="gantt-bar" [class.gantt-bar-editable]="task.canEdit" [class.gantt-bar-conflict]="conflicts().issues.has(task.id)"
+                    [attr.data-tone]="tone(task)" [style.left.px]="bar.left" [style.width.px]="bar.width"
+                    [title]="task.title + ' · ' + labels[task.columnId] + ' · ' + dateLabel(task.start) + ' – ' + dateLabel(task.end)"
+                    (pointerdown)="beginDrag($event, row, 'move')" (dblclick)="task.canEdit && openEditor(task)">
+                    @if (!section) {
+                      <span class="gantt-progress" [style.width.%]="task.progress" aria-hidden="true"></span>
+                      @if (bar.width >= 44) { <span class="gantt-bar-text">{{ bar.width > 125 ? task.title : task.key }}</span> }
+                      @if (task.canEdit) {
+                        <span class="gantt-grip leading" aria-hidden="true" (pointerdown)="beginDrag($event, row, 'start')"></span>
+                        <span class="gantt-grip trailing" aria-hidden="true" (pointerdown)="beginDrag($event, row, 'end')"></span>
+                      }
+                    }
+                  </div>
+                  @if (!section && !demo && (!linkFrom() || linkFrom() === task.id)) {
+                    <button type="button" class="gantt-bar-link gantt-icon" [style.left.px]="bar.left + bar.width + 3"
+                      [attr.aria-label]="'Crear dependencia desde ' + task.key"
+                      [disabled]="busy()" (click)="linkButton(task.id)" (pointerdown)="beginLinkDrag($event, task.id)">
+                      <i class="pi pi-link" aria-hidden="true"></i>
+                    </button>
+                  }
+                } @else if (!section) {
+                  <span class="gantt-unscheduled">{{ row.range ? 'Fuera del intervalo · ' + dateLabel(task.start) : 'Sin planificar' }}</span>
+                }
+              </div>
+            </div>
+          }
+          <div aria-hidden="true" [style.height.px]="(rows().length - rowWindow().last) * rowHeight"></div>
+          @if (canCreateIssue()) {
+            <div class="gantt-grid gantt-task-row">
+              <div class="gantt-label gantt-task-label gantt-new-label">
+                <button type="button" class="gantt-add-row" aria-label="Crear incidencia al final del cronograma" [disabled]="busy()" (click)="openNewIssue()">
+                  <i class="pi pi-plus" aria-hidden="true"></i> Nueva incidencia
+                </button>
+              </div>
+              <div class="gantt-track gantt-new-track" (dblclick)="createOnDate($event)" title="Doble clic para crear en esta fecha"></div>
+            </div>
+          }
+        </div>
+      </div>
+    </div>
+  }
+</main>
+
+<p-dialog [header]="editingPlan() ? 'Configurar diagrama' : 'Nuevo diagrama'" [visible]="settingsOpen()" [modal]="true"
+  [draggable]="false" [closable]="!busy()" [closeOnEscape]="!busy()" [style]="{width: 'min(94vw, 36rem)'}" (visibleChange)="settingsOpen.set($event)">
+  @let draft = settingsDraft();
+  <form class="grid gap-3" (ngSubmit)="saveSettings()">
+    <label for="gantt-plan-name" class="font-medium">Nombre</label>
+    <input id="gantt-plan-name" pInputText name="name" maxlength="100" [ngModel]="draft.name" (ngModelChange)="changeSettings({name: $event})" required />
+    <label for="gantt-plan-projects" class="font-medium">Proyectos del diagrama</label>
+    <p-multiselect inputId="gantt-plan-projects" name="projects" ariaLabel="Proyectos del diagrama" placeholder="Seleccionar proyectos"
+      [options]="availableProjects()" [ngModel]="draft.projectIds" (ngModelChange)="changeSettings({projectIds: $event ?? []})" appendTo="body" [filter]="true" />
+    <div class="grid gap-3 sm:grid-cols-2">
+      <label class="grid gap-1 text-sm font-medium">Fecha de inicio del diagrama
+        <input pInputText type="date" name="start" [ngModel]="draft.startDate" (ngModelChange)="changeSettings({startDate: $event})" required />
+      </label>
+      <label class="grid gap-1 text-sm font-medium">Capacidad simultánea
+        <input pInputText type="number" name="capacity" min="1" max="100" placeholder="Sin límite"
+          [ngModel]="draft.capacity" (ngModelChange)="changeSettings({capacity: $event})" />
+      </label>
+      <label class="grid gap-1 text-sm font-medium">Capacidad por responsable
+        <input pInputText type="number" name="assigneeCapacity" min="1" max="100" placeholder="Sin límite"
+          [ngModel]="draft.assigneeCapacity" (ngModelChange)="changeSettings({assigneeCapacity: $event})" />
+      </label>
+    </div>
+    <label class="flex items-start gap-2"><input type="checkbox" class="mt-1 accent-primary-700" name="workdays" [ngModel]="draft.workdaysOnly"
+      (ngModelChange)="changeSettings({workdaysOnly: $event})" /> Programar de lunes a viernes</label>
+    <label class="flex items-start gap-2"><input type="checkbox" class="mt-1 accent-primary-700" name="sync" [ngModel]="draft.syncIssueDates"
+      [disabled]="!!editingPlan()" (ngModelChange)="changeSettings({syncIssueDates: $event})" /> Sincronizar fechas y estimaciones con las fichas</label>
+    <label class="flex items-start gap-2"><input type="checkbox" class="mt-1 accent-primary-700" name="shared" [ngModel]="draft.shared"
+      (ngModelChange)="changeSettings({shared: $event})" /> Compartir con quienes tengan acceso a todos los proyectos</label>
+    @if (settingsError()) { <p role="alert" class="m-0 text-sm text-red-700">{{ settingsError() }}</p> }
+    <div class="flex flex-wrap justify-between gap-2">
+      @if (editingPlan(); as plan) {
+        <p-button label="Eliminar diagrama" ariaLabel="Eliminar diagrama" severity="danger" [text]="true" [disabled]="busy()" (onClick)="askDelete(plan)" />
+      }
+      <p-button class="ml-auto" label="Guardar diagrama" ariaLabel="Guardar diagrama" type="submit" icon="pi pi-check" [loading]="busy()"
+        [disabled]="!draft.name.trim() || !draft.projectIds.length || !draft.startDate" />
+    </div>
+  </form>
+</p-dialog>
+
+<p-dialog header="Eliminar diagrama" [visible]="!!deletingPlan()" [modal]="true" [draggable]="false" [closable]="!busy()"
+  [closeOnEscape]="!busy()" [style]="{width: 'min(94vw, 28rem)'}" (visibleChange)="!$event && deletingPlan.set(null)">
+  <p class="mt-0">Se eliminará «{{ deletingPlan()?.name }}». Sus incidencias seguirán en sus proyectos.</p>
+  @if (settingsError()) { <p role="alert" class="text-red-700">{{ settingsError() }}</p> }
+  <div class="flex justify-end gap-2">
+    <p-button label="Cancelar" severity="secondary" [text]="true" [disabled]="busy()" (onClick)="deletingPlan.set(null)" />
+    <p-button label="Confirmar eliminación" ariaLabel="Confirmar eliminación del diagrama" severity="danger" [loading]="busy()" (onClick)="deletePlan()" />
+  </div>
+</p-dialog>
+
+<p-dialog header="Incidencias del diagrama" [visible]="pickerOpen()" [modal]="true" [draggable]="false" [closable]="!busy()"
+  [closeOnEscape]="!busy()" [style]="{width: 'min(94vw, 48rem)'}" (visibleChange)="pickerOpen.set($event)">
+  <div class="gantt-picker">
+    <div class="grid min-w-0 content-start gap-2">
+      <label for="gantt-candidate-search" class="font-medium">Buscar por código o asunto</label>
+      <input id="gantt-candidate-search" type="search" pInputText maxlength="200" [value]="candidateDraft()"
+        (input)="searchCandidates($any($event.target).value)" />
+      @if (candidatesLoading()) { <p class="m-0 text-sm text-surface-600" role="status">Buscando incidencias…</p> }
+      @else {
+        <ul class="gantt-dialog-list">
+          @for (candidate of candidates(); track candidate.id) {
+            <li><label class="flex cursor-pointer items-start gap-2 p-2 text-sm">
+              <input type="checkbox" class="mt-1 accent-primary-700" [checked]="selectedItems().includes(candidate.id)" [disabled]="busy()"
+                (change)="toggleCandidate(candidate)" />
+              <span><strong>{{ candidate.key }}</strong> {{ candidate.title }}</span>
+            </label></li>
+          } @empty { <li class="p-2 text-sm text-surface-600">No hay incidencias que coincidan.</li> }
+        </ul>
+      }
+    </div>
+    <div class="grid min-w-0 content-start gap-2">
+      <h3 class="m-0 text-base font-medium">Selección · {{ selectedItems().length }}</h3>
+      <ol class="gantt-dialog-list">
+        @for (item of pickerSelection(); track item.id; let i = $index) {
+          <li class="flex items-center gap-1 p-1 text-sm" [attr.draggable]="!busy()" (dragstart)="beginReorder($event, item.id)"
+            (dragover)="allowReorder($event)" (drop)="dropReorder($event, item.id)" (dragend)="endReorder()">
+            <i class="pi pi-bars text-surface-500" aria-hidden="true"></i>
+            <span class="min-w-0 grow truncate" [title]="item.title"><strong>{{ item.key }}</strong> {{ item.title }}</span>
+            <button class="gantt-icon" type="button" [attr.aria-label]="'Subir ' + item.key" [disabled]="i === 0 || busy()" (click)="reorder(item.id, -1)"><i class="pi pi-arrow-up" aria-hidden="true"></i></button>
+            <button class="gantt-icon" type="button" [attr.aria-label]="'Bajar ' + item.key" [disabled]="i === selectedItems().length - 1 || busy()" (click)="reorder(item.id, 1)"><i class="pi pi-arrow-down" aria-hidden="true"></i></button>
+            <button class="gantt-icon" type="button" [attr.aria-label]="'Quitar ' + item.key" [disabled]="busy()" (click)="removeItem(item.id)"><i class="pi pi-times" aria-hidden="true"></i></button>
+          </li>
+        } @empty { <li class="p-2 text-sm text-surface-600">Selecciona las incidencias del plan.</li> }
+      </ol>
+    </div>
+  </div>
+  @if (pickerError()) { <p role="alert" class="text-sm text-red-700">{{ pickerError() }}</p> }
+  <div class="mt-3 flex justify-end">
+    <p-button label="Guardar selección" ariaLabel="Guardar selección" icon="pi pi-check" [loading]="busy()"
+      [disabled]="selectedItems().length > 250" (onClick)="saveSelection()" />
+  </div>
+</p-dialog>
+
+<p-dialog header="Planificación de la incidencia" [visible]="!!editor()" [modal]="true" [draggable]="false" [closable]="!busy()"
+  [closeOnEscape]="!busy()" [style]="{width: 'min(94vw, 30rem)'}" (visibleChange)="!$event && editor.set(null)">
+  @let dates = taskDraft();
+  @if (editor(); as task) {
+    <p class="mt-0 font-semibold text-surface-800">{{ task.key }} · {{ task.title }}</p>
+    <form class="grid gap-3" (ngSubmit)="saveTask()">
+      <div class="grid gap-3 sm:grid-cols-2">
+        <label class="grid gap-1 text-sm font-medium">Inicio planificado
+          <input pInputText name="start" type="date" [ngModel]="dates.start" (ngModelChange)="changeStart($event)" />
+        </label>
+        <label class="grid gap-1 text-sm font-medium">Fin planificado
+          <input pInputText name="end" type="date" [ngModel]="dates.end" (ngModelChange)="changeDraft({end: $event || null, pinned: !!$event})" />
+        </label>
+      </div>
+      <label class="grid gap-1 text-sm font-medium">Estimación en minutos
+        <input pInputText name="estimate" type="number" min="0" max="1752000" [ngModel]="dates.estimateMinutes"
+          (ngModelChange)="changeEstimate($event)" />
+      </label>
+      <label class="flex items-start gap-2"><input type="checkbox" name="pinned" class="mt-1 accent-primary-700" [ngModel]="dates.pinned" [disabled]="!dates.start"
+        (ngModelChange)="changeDraft({pinned: $event})" /> Fijar fechas para el recálculo</label>
+      @if (task.dueDate) { <p class="m-0 text-sm text-surface-600">Vencimiento de la incidencia · {{ dateLabel(task.dueDate) }}</p> }
+      @if (editorError()) { <p role="alert" class="m-0 text-sm text-red-700">{{ editorError() }}</p> }
+      <div class="flex flex-wrap justify-end gap-2">
+        @if (task.start) {
+          <p-button label="Quitar fechas" ariaLabel="Quitar fechas" [text]="true" severity="secondary" [disabled]="busy()" (onClick)="saveTask(true)" />
+        }
+        <p-button label="Guardar planificación" ariaLabel="Guardar planificación" type="submit" icon="pi pi-check" [loading]="busy()" />
+      </div>
+    </form>
+  }
+</p-dialog>
+
+<p-dialog header="Dependencias" [visible]="dependencyOpen()" [modal]="true" [draggable]="false" [closable]="!busy()"
+  [closeOnEscape]="!busy()" [style]="{width: 'min(94vw, 43rem)'}" (visibleChange)="dependencyOpen.set($event)">
+  <div class="grid gap-2 sm:grid-cols-2">
+    <p-select ariaLabel="Predecesora" placeholder="Predecesora" [options]="selectionOptions()" [ngModel]="linkFrom()"
+      (ngModelChange)="startLink($event)" appendTo="body" [filter]="true" />
+    <p-select ariaLabel="Sucesora" placeholder="Sucesora" [options]="linkTargets()" [ngModel]="linkTo()"
+      (ngModelChange)="linkTo.set($event)" appendTo="body" [filter]="true" />
+    <p-select ariaLabel="Tipo de dependencia" [options]="sourceTypeOptions" [ngModel]="linkType()"
+      (ngModelChange)="linkType.set($event)" appendTo="body" />
+    <p-button label="Vincular" ariaLabel="Guardar dependencia" icon="pi pi-link" [disabled]="!linkTo() || busy()" [loading]="busy()" (onClick)="addLink()" />
+  </div>
+  @if (dependencyError()) { <p role="alert" class="text-sm text-red-700">{{ dependencyError() }}</p> }
+  <ul class="gantt-dialog-list mt-3">
+    @for (link of chart()?.links ?? []; track link.id) {
+      <li class="flex flex-wrap items-center gap-2 p-2 text-sm">
+        <span class="grow">{{ taskFor(link.source)?.key }} → {{ taskFor(link.target)?.key }} · {{ link.type === 'START_TO_START' ? 'Inicio a inicio' : 'Fin a inicio' }}</span>
+        @if (taskFor(link.target)?.canEdit) {
+          <p-button icon="pi pi-trash" [ariaLabel]="'Quitar dependencia de ' + taskFor(link.target)?.key" [text]="true" size="small" severity="danger"
+            [disabled]="busy()" (onClick)="removeLink(link.id)" />
+        }
+      </li>
+    } @empty { <li class="p-2 text-sm text-surface-600">Aún no hay dependencias en el diagrama.</li> }
+  </ul>
+</p-dialog>
+
+<app-work-issue-create [projectIds]="permittedProjectIds()" (created)="issueCreated($event)" />

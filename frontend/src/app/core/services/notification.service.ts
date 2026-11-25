@@ -22,6 +22,7 @@ export class NotificationService {
 
   private items = signal<AppNotification[]>([]);
   private pollHandle: ReturnType<typeof setInterval> | null = null;
+  private session = 0;
 
   notifications = computed(() => this.items());
   unreadCount = computed(() => this.items().filter(n => !n.read).length);
@@ -30,10 +31,15 @@ export class NotificationService {
     if (!environment.useApi) {
       return;
     }
-    const list = await firstValueFrom(
-      this.http.get<AppNotification[]>(`${this.base}/api/notifications`)
-    );
-    this.items.set(list);
+    const session = this.session;
+    try {
+      const list = await firstValueFrom(
+        this.http.get<AppNotification[]>(`${this.base}/api/notifications`)
+      );
+      if (this.session === session) this.items.set(list);
+    } catch {
+      // Evitar rechazos no manejados en el polling (red/API caída).
+    }
   }
 
   startPolling(): void {
@@ -45,6 +51,7 @@ export class NotificationService {
   }
 
   stopPolling(): void {
+    this.session++;
     if (this.pollHandle) {
       clearInterval(this.pollHandle);
       this.pollHandle = null;
@@ -56,15 +63,17 @@ export class NotificationService {
     if (!environment.useApi) {
       return;
     }
+    const session = this.session;
     await firstValueFrom(this.http.patch<void>(`${this.base}/api/notifications/${id}/read`, {}));
-    this.items.update(list => list.map(n => (n.id === id ? { ...n, read: true } : n)));
+    if (this.session === session) this.items.update(list => list.map(n => (n.id === id ? { ...n, read: true } : n)));
   }
 
   async markAllRead(): Promise<void> {
     if (!environment.useApi) {
       return;
     }
+    const session = this.session;
     await firstValueFrom(this.http.patch<void>(`${this.base}/api/notifications/read-all`, {}));
-    this.items.update(list => list.map(n => ({ ...n, read: true })));
+    if (this.session === session) this.items.update(list => list.map(n => ({ ...n, read: true })));
   }
 }

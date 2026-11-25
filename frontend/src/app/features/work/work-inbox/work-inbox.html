@@ -1,145 +1,126 @@
-<div class="yt-content yt-content-standalone work-board-view flex flex-col gap-4">
-  <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-    <div class="flex items-center gap-3">
-      <p-button icon="pi pi-arrow-left" text routerLink="/work/agile" />
+<main class="yt-content yt-content-standalone flex flex-col gap-4" aria-labelledby="support-title">
+  <header class="rounded-2xl border border-surface-200 bg-surface-0 p-4 sm:p-6">
+    <div class="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h2 class="text-xl font-semibold m-0">Bandeja de Entrada (Secretaría)</h2>
-        <p class="text-sm text-surface-500 m-0 mt-1">
-          Notas que llegan a la oficina — se publican en el
-          @if (workService.generalBoard(); as general) {
-            <a [routerLink]="['/work/agile', general.id]" class="text-primary-600 hover:underline">tablero general</a>
-          } @else {
-            tablero general
-          }
-        </p>
+        <h1 id="support-title" class="m-0 text-2xl font-semibold">Bandeja de entrada</h1>
+        <p class="mb-0 mt-1 text-sm text-surface-600">Clasifica, deriva y da seguimiento a las solicitudes.</p>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <p-button label="Formulario público" icon="pi pi-external-link" severity="secondary" [outlined]="true" routerLink="/solicitud" />
+        @if (workService.generalBoard() && workService.canAssignTasks()) {
+          <p-button label="Registrar solicitud" icon="pi pi-plus" (onClick)="openCreateCard()" />
+        }
       </div>
     </div>
-    <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
-      <input
-        class="w-full sm:w-64 p-2 border border-surface-200 rounded"
-        placeholder="Buscar solicitudes…"
-        [ngModel]="search()"
-        (ngModelChange)="search.set($event)"
-      />
-      <select
-        class="w-full sm:w-48 p-2 border border-surface-200 rounded"
-        [ngModel]="assigneeFilter()"
-        (ngModelChange)="assigneeFilter.set($event)"
-      >
-        @for (opt of memberFilterOptions(); track opt.value) {
-          <option [ngValue]="opt.value">{{ opt.label }}</option>
-        }
-      </select>
-    </div>
-  </div>
-
-  @if (createError(); as err) {
-    <p class="text-sm text-red-600 m-0">{{ err }}</p>
-  }
-
-  <div class="work-kanban-scroll">
-    <div class="work-kanban">
-      @for (column of columns; track column.id) {
-        <div
-          class="work-kanban-column"
-          pDroppable="work"
-          (onDrop)="onDrop($event, column.id)"
-        >
-          <div class="work-kanban-column-header">
-            <div class="flex items-center gap-2">
-              <i [class]="column.icon + ' text-primary-500'"></i>
-              <span class="font-semibold">{{ column.title }}</span>
-              <span class="work-kanban-count">{{ cardsForColumn(column.id).length }}</span>
-            </div>
-            @if (column.id === 'registered') {
-              <p-button
-                icon="pi pi-plus"
-                text
-                rounded
-                size="small"
-                (onClick)="openCreateCard(column.id)"
-              />
-            }
-          </div>
-
-          <div class="work-kanban-cards">
-            @for (card of cardsForColumn(column.id); track card.id) {
-              @let assignee = workService.getMember(card.assigneeId);
-              @let priority = priorityMeta(card.priority);
-              <article
-                class="work-kanban-card"
-                pDraggable="work"
-                (onDragStart)="onDragStart($event, card)"
-                (click)="openCard(card)"
-              >
-                <h4 class="work-kanban-card-title">{{ card.title }}</h4>
-                @if (card.requesterName) {
-                  <p class="text-xs text-surface-500 mt-1 mb-0">
-                    <i class="pi pi-user"></i> {{ card.requesterName }}
-                    @if (card.requesterPhone) {
-                      <span class="ml-2"><i class="pi pi-phone"></i> {{ card.requesterPhone }}</span>
-                    }
-                  </p>
-                }
-                <div class="work-kanban-card-meta">
-                  <span [class]="priority.tone">
-                    <i [class]="priority.icon"></i>
-                  </span>
-                  @if (card.dueDate) {
-                    <span
-                      class="work-kanban-due"
-                      [class.work-kanban-due-soon]="isDueSoon(card.dueDate)"
-                      [class.work-kanban-due-over]="isOverdue(card.dueDate)"
-                    >
-                      <i class="pi pi-calendar text-xs"></i>
-                      {{ formatDate(card.dueDate) }}
-                    </span>
-                  }
-                  @if (card.trackedMinutes > 0) {
-                    <span 
-                      class="text-xs px-1.5 py-0.5 rounded border"
-                      [class]="getTimeOverrunColor(getTimeOverrunStatus(card))"
-                    >
-                      <i class="pi pi-clock"></i> {{ formatMinutes(card.trackedMinutes) }}
-                    </span>
-                  }
-                  @if (assignee) {
-                    <p-avatar
-                      [label]="assignee.initials"
-                      shape="circle"
-                      style="background-color: #ccfbf1; color: #134e4a; width: 1.5rem; height: 1.5rem; font-size: 0.65rem"
-                    />
-                  }
-                </div>
-                @if (column.id === 'in_assignment') {
-                  <p-button
-                    label="Asignar"
-                    size="small"
-                    class="w-full mt-2"
-                    (click)="$event.stopPropagation(); openAssignDialog(card)"
-                  />
-                }
-              </article>
-            }
-          </div>
-        </div>
+    <div class="mt-4 flex flex-wrap gap-2" role="group" aria-label="Colas de solicitudes">
+      @for (item of queues; track item.id) {
+        <button type="button" class="flex items-center gap-2 rounded-lg border border-surface-200 px-3 py-2 text-sm"
+          [class.bg-primary-50]="queue() === item.id" [class.text-primary-900]="queue() === item.id"
+          [attr.aria-pressed]="queue() === item.id" (click)="setFilter('queue', item.id === 'reception' ? null : item.id)">
+          <i [class]="item.icon" aria-hidden="true"></i>{{ item.label }}
+          <span class="rounded bg-surface-100 px-1.5 text-surface-800">{{ counts()[item.id] }}</span>
+        </button>
       }
     </div>
-  </div>
-</div>
+  </header>
+
+  <section aria-label="Filtros de solicitudes" class="grid gap-3 sm:grid-cols-3">
+    <input pInputText type="search" aria-label="Buscar solicitudes" placeholder="Buscar por clave o asunto…"
+      [ngModel]="search()" (ngModelChange)="setFilter('q', $event)" />
+    <p-select ariaLabel="Canal de recepción" [options]="channelFilterOptions" [ngModel]="channel()"
+      (ngModelChange)="setFilter('channel', $event)" placeholder="Todos los canales" [fluid]="true" appendTo="body" />
+    <p-select ariaLabel="Responsable" [options]="memberFilterOptions()" [ngModel]="assigneeFilter()"
+      (ngModelChange)="setFilter('assignee', $event)" placeholder="Todos los responsables" [fluid]="true" appendTo="body" />
+  </section>
+
+  @if (announcement()) { <p role="status" class="m-0 rounded-lg bg-primary-50 p-3 text-primary-900">{{ announcement() }}</p> }
+  @if (inboxLoading()) {
+    <app-work-skeleton label="Cargando solicitudes…" />
+  } @else if (inboxError()) {
+    <p role="alert" class="m-0 text-red-700">No se pudieron cargar las solicitudes.</p>
+    <div><p-button label="Reintentar" icon="pi pi-refresh" [outlined]="true" (onClick)="loadInbox()" /></div>
+  } @else {
+    @if (selectedCardId() && !drawerOpen()) { <p role="alert" class="m-0 text-surface-700">Solicitud no disponible.</p> }
+    <section class="grid gap-2" aria-label="Solicitudes de la cola">
+      @for (card of results(); track card.id) {
+        <article class="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-surface-200 bg-surface-0 p-4">
+          <div class="grid min-w-0 flex-1 gap-1">
+            <span class="text-xs font-semibold text-primary-800">{{ workService.getIssueKey(card) }}</span>
+            <a class="break-words text-base font-semibold text-surface-900 hover:underline"
+              [routerLink]="[]" [queryParams]="{issue: card.id}" queryParamsHandling="merge">{{ card.title }}</a>
+            <div class="flex flex-wrap gap-x-3 gap-y-1 text-sm text-surface-600">
+              <span>{{ channelLabel(card) }} · {{ formatDate(card.createdAt) }}</span>
+              <span>{{ labels[card.columnId] }}</span>
+              <span>{{ workService.getMember(card.assigneeId)?.name || 'Sin asignar' }}</span>
+            </div>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            @if (slaLabel(card); as risk) { <span class="rounded-lg bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-900">{{ risk }}</span> }
+            @if (workService.canAssignTasks() && canRoute(card)) {
+              <p-button label="Asignar" icon="pi pi-arrow-right" size="small" [outlined]="true" (onClick)="openAssignDialog(card)" />
+            }
+          </div>
+        </article>
+      } @empty {
+        <div class="rounded-xl border border-dashed border-surface-300 bg-surface-0 p-8 text-center">
+          <h2 class="m-0 text-lg font-semibold">No hay solicitudes en esta cola</h2>
+          <p class="mb-0 mt-1 text-sm text-surface-600">Cambia de cola o ajusta la búsqueda.</p>
+        </div>
+      }
+    </section>
+  }
+</main>
+
+<p-dialog header="Registrar solicitud" [visible]="createOpen()" (visibleChange)="createOpen.set($event)"
+  [modal]="true" [draggable]="false" [closable]="!creating()" [closeOnEscape]="!creating()"
+  [style]="{width: 'min(94vw, 30rem)'}">
+  <form class="flex flex-col gap-3" (ngSubmit)="registerRequest()">
+    <label for="request-title" class="font-semibold">Asunto</label>
+    <app-work-writing-field inputId="request-title" label="Asunto" [(value)]="incomingTitle" [required]="true"
+      [disabled]="creating()" placeholder="Ej. Verificar los datos de una solicitud" />
+    <label for="request-description" class="font-semibold">Descripción</label>
+    <app-work-writing-field inputId="request-description" label="Descripción" [(value)]="incomingDescription"
+      [rows]="4" [maxLength]="10000" [disabled]="creating()" />
+    <div class="grid gap-2 sm:grid-cols-2">
+      <div class="grid gap-1"><label for="request-name" class="text-sm font-medium">Solicitante</label>
+        <input pInputText id="request-name" name="requester" maxlength="160" [ngModel]="incomingName()"
+          (ngModelChange)="incomingName.set($event)" [disabled]="creating()" />
+      </div>
+      <div class="grid gap-1"><label for="request-email" class="text-sm font-medium">Correo</label>
+        <input pInputText id="request-email" name="email" type="email" maxlength="254" [ngModel]="incomingEmail()"
+          (ngModelChange)="incomingEmail.set($event)" [disabled]="creating()" />
+      </div>
+    </div>
+    <label for="request-channel" class="font-semibold">Canal de recepción</label>
+    <p-select inputId="request-channel" name="channel" [options]="channelOptions" [ngModel]="incomingChannel()"
+      (ngModelChange)="incomingChannel.set($event)" [fluid]="true" appendTo="body" />
+    @if (createError(); as err) {
+      <p role="alert" class="text-red-700">{{ err }}</p>
+    }
+    <div class="flex flex-wrap justify-end gap-2 pt-2">
+      <p-button label="Cancelar" severity="secondary" [text]="true" [disabled]="creating()" (onClick)="createOpen.set(false)" />
+      <p-button type="submit" label="Registrar" ariaLabel="Registrar" icon="pi pi-check"
+        [disabled]="!incomingTitle().trim()" [loading]="creating()" />
+    </div>
+  </form>
+</p-dialog>
 
 <p-dialog
   [visible]="showAssignDialog()"
   (visibleChange)="showAssignDialog.set($event)"
   [modal]="true"
+  [closable]="!assigning()"
+  [closeOnEscape]="!assigning()"
   [style]="{ width: 'min(96vw, 24rem)' }"
-  header="Asignar a tablero"
+  header="Asignar y enviar"
   (onHide)="closeAssignDialog()"
 >
   <div class="flex flex-col gap-4">
     <div>
-      <label class="block text-sm font-medium mb-2">Seleccionar Tablero</label>
+      <label for="assign-board" class="block text-sm font-medium mb-2">Tablero destino</label>
       <p-select
+        inputId="assign-board"
+        ariaLabel="Tablero destino"
         [options]="boardOptions()"
         optionLabel="label"
         optionValue="value"
@@ -152,8 +133,10 @@
     </div>
 
     <div>
-      <label class="block text-sm font-medium mb-2">Seleccionar Miembro</label>
+      <label for="assign-member" class="block text-sm font-medium mb-2">Responsable</label>
       <p-select
+        inputId="assign-member"
+        ariaLabel="Responsable"
         [options]="assignMemberOptions()"
         optionLabel="label"
         optionValue="value"
@@ -170,13 +153,14 @@
     </div>
 
     @if (assignError(); as err) {
-      <p class="text-sm text-red-600 m-0">{{ err }}</p>
+      <p role="alert" class="text-sm text-red-700 m-0">{{ err }}</p>
     }
 
     <div class="flex justify-end gap-2 pt-2 border-t border-surface-200">
       <p-button label="Cancelar" severity="secondary" text (onClick)="closeAssignDialog()" [disabled]="assigning()" />
       <p-button
-        label="Asignar y mover"
+        label="Asignar y enviar"
+        ariaLabel="Asignar y enviar"
         icon="pi pi-check"
         (onClick)="saveAssignment()"
         [loading]="assigning()"

@@ -58,6 +58,10 @@ public class User {
     public boolean isActive() { return active; }
     public void setActive(boolean active) { this.active = active; }
     public Set<UserRole> getRoles() { return roles; }
-    public void setRoles(Set<UserRole> roles) { this.roles = roles; }
+    public void setRoles(Set<UserRole> roles) {
+        if (this.roles == roles) return;
+        this.roles.clear();
+        this.roles.addAll(roles);
+    }
     public Instant getCreatedAt() { return createdAt; }
 }

@@ -49,7 +49,7 @@ public class BoardListController {
     ) {
         requireProjectAccess(principal, projectId);
         List<BoardList> lists = boardListRepository.findByProjectIdAndArchivedFalseOrderBySortOrderAsc(projectId);
-        return ResponseEntity.ok(lists.stream().map(this::toDto).toList());
+        return ResponseEntity.ok(lists.stream().map(BoardListDto::from).toList());
     }
 
     @PostMapping
@@ -71,7 +71,7 @@ public class BoardListController {
         list.setArchived(false);
 
         BoardList saved = boardListRepository.save(list);
-        return ResponseEntity.ok(toDto(saved));
+        return ResponseEntity.ok(BoardListDto.from(saved));
     }
 
     @PutMapping("/{listId}")
@@ -93,7 +93,7 @@ public class BoardListController {
         list.setArchived(req.archived());
 
         BoardList updated = boardListRepository.save(list);
-        return ResponseEntity.ok(toDto(updated));
+        return ResponseEntity.ok(BoardListDto.from(updated));
     }
 
     @DeleteMapping("/{listId}")
@@ -125,17 +125,5 @@ public class BoardListController {
     private User loadUser(ScarPrincipal principal) {
         return userRepository.findByIdWithRoles(principal.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
-    }
-
-    private BoardListDto toDto(BoardList list) {
-        return new BoardListDto(
-            list.getId(),
-            list.getProject().getId(),
-            list.getName(),
-            list.getSortOrder(),
-            list.isArchived(),
-            list.getCreatedAt(),
-            list.getUpdatedAt()
-        );
     }
 }

@@ -1,6 +1,7 @@
 <div class="min-h-screen">
-  <p-drawer
+  <p-drawer #navigationDrawer
     [(visible)]="drawerOpen"
+    (onHide)="restoreNavFocus()"
     class="block md:hidden"
     [style]="{'border': 'none', 'box-shadow': 'none'}">
     <ng-template #headless>
@@ -8,33 +9,40 @@
         [isMobile]="true"
         [menuItems]="allMenuItems()"
         (itemClick)="closeNavigationDrawers()"
-      />
+      >
+        <button pButton type="button" icon="pi pi-bars" severity="secondary"
+          class="sidebar-close" aria-label="Cerrar navegación" aria-expanded="true"
+          (click)="navigationDrawer.close($event)"></button>
+      </app-sidebar>
     </ng-template>
   </p-drawer>
-  <app-sidebar
-    [isMobile]="false"
-    [menuItems]="allMenuItems()"
-    class="hidden md:block"
-  />
-  <div class="layout-container" [class.layout-container-work]="isWorkView()">
-    @if (!isWorkView()) {
-      <div class="layout-topbar">
+  @if (desktopNavOpen()) {
+    <app-sidebar id="desktop-navigation"
+      [isMobile]="false"
+      [menuItems]="allMenuItems()"
+      class="hidden md:block"
+    />
+  }
+  <div class="layout-container" [class.nav-collapsed]="!desktopNavOpen()" [class.layout-container-work]="isWorkView()">
+    <div class="layout-topbar" [class.layout-topbar-work]="isWorkView()">
+      <button #mobileNavButton pButton type="button" icon="pi pi-bars" severity="secondary" [text]="true"
+        class="nav-mobile-trigger" aria-label="Abrir navegación" [attr.aria-expanded]="drawerOpen"
+        (click)="drawerOpen = !drawerOpen"></button>
+      <button pButton type="button" icon="pi pi-bars" severity="secondary" [text]="true"
+        class="nav-desktop-trigger" [attr.aria-expanded]="desktopNavOpen()"
+        [attr.aria-controls]="desktopNavOpen() ? 'desktop-navigation' : null"
+        [attr.aria-label]="desktopNavOpen() ? 'Cerrar navegación' : 'Abrir navegación'"
+        (click)="desktopNavOpen.set(!desktopNavOpen())"></button>
+      @if (!isWorkView()) {
         <p-breadcrumb [model]="appService.breadcrumbs()" [home]="appService.home" [style]="{'padding': '0'}" class="hidden md:block">
           <ng-template #separator> / </ng-template>
         </p-breadcrumb>
-        <p-button icon="pi pi-bars" class="md:hidden" (click)="drawerOpen = true"/>
-        <div class="app-avatar" (click)="openAccountDrawer()">
-          <p-avatar icon="pi pi-user" style="background-color: #ccfbf1; color: #134e4a" shape="circle" />
-          <span>{{ userDisplayName() }}</span>
-        </div>
-      </div>
-    } @else {
-      <div class="layout-topbar layout-topbar-work">
-        <p-button icon="pi pi-bars" class="md:hidden" (click)="drawerOpen = true"/>
-        <div class="flex-1"></div>
-        @if (useApi) {
+      }
+      <div class="ml-auto flex items-center gap-2">
+        @if (isWorkView() && useApi) {
           <p-button
             icon="pi pi-bell"
+            ariaLabel="Notificaciones"
             severity="secondary"
             [text]="true"
             (onClick)="openNotifications()"
@@ -42,17 +50,38 @@
             badgeSeverity="danger"
           />
         }
-        <div class="app-avatar" (click)="openAccountDrawer()">
-          <p-avatar icon="pi pi-user" style="background-color: #ccfbf1; color: #134e4a" shape="circle" />
+        <app-theme-picker />
+        <button type="button" class="app-avatar" aria-label="Mi cuenta" (click)="openAccountDrawer()">
+          <p-avatar icon="pi pi-user" class="account-avatar" shape="circle" />
           <span class="hidden sm:inline">{{ userDisplayName() }}</span>
-        </div>
+        </button>
       </div>
-    }
+    </div>
     <div class="layout-content" [class.layout-content-work]="isWorkView()">
       <router-outlet/>
     </div>
+    @if (isWorkView()) {
+      <nav class="work-dock" aria-label="Accesos rápidos del espacio de trabajo">
+        <a [routerLink]="inboxLink()" aria-label="Bandeja de entrada" [attr.aria-current]="activeShortcut() === 'inbox' ? 'page' : null">
+          <i class="pi pi-inbox" aria-hidden="true"></i><span class="work-dock-label">Bandeja de entrada</span><span class="work-dock-short" aria-hidden="true">Bandeja</span>
+        </a>
+        <a [routerLink]="plannerLink()" aria-label="Planificador" [attr.aria-current]="activeShortcut() === 'planning' ? 'page' : null">
+          <i class="pi pi-calendar" aria-hidden="true"></i><span class="work-dock-label">Planificador</span><span class="work-dock-short" aria-hidden="true">Planificar</span>
+        </a>
+        <a [routerLink]="boardLink()" aria-label="Tablero" [attr.aria-current]="activeShortcut() === 'agile' ? 'page' : null">
+          <i class="pi pi-objects-column" aria-hidden="true"></i><span>Tablero</span>
+        </a>
+        <button type="button" aria-label="Cambiar tablero" aria-haspopup="dialog" (click)="openBoardSwitcher()">
+          <i class="pi pi-th-large" aria-hidden="true"></i><span class="work-dock-label">Cambiar tablero</span><span class="work-dock-short" aria-hidden="true">Cambiar</span>
+        </button>
+      </nav>
+    }
   </div>
 </div>
+
+@if (isWorkView()) {
+  <app-work-board-switcher />
+}
 
 <p-drawer [(visible)]="notificationsOpen" position="right" header="Notificaciones">
   <div class="flex flex-col gap-3 p-2">
@@ -97,7 +126,7 @@
     <div class="flex flex-col gap-6 p-2">
       <div class="border border-surface-200 rounded-xl p-4">
         <div class="flex items-center gap-3 mb-4">
-          <p-avatar icon="pi pi-user" style="background-color: #ccfbf1; color: #134e4a" shape="circle" />
+          <p-avatar icon="pi pi-user" class="account-avatar" shape="circle" />
           <div>
             <div class="font-semibold">{{ user.fullName }}</div>
             <div class="text-sm text-surface-500">{{ user.username }}</div>
@@ -163,15 +192,15 @@
   [closable]="false"
   [draggable]="false"
   [resizable]="false"
-  [style]="{ width: '28rem' }"
+  [style]="{ width: 'min(28rem, 94vw)' }"
 >
   <div class="flex flex-col gap-4">
     <p class="m-0 text-surface-600">
-      Se cerrará la sesión actual y volverás a la pantalla de ingreso.
+      Volverás a la pantalla de ingreso. Los cambios sin guardar se perderán.
     </p>
     <div class="flex justify-end gap-2">
-      <p-button label="Cancelar" severity="secondary" text (onClick)="cancelLogout()" />
-      <p-button label="Cerrar sesión" severity="danger" (onClick)="confirmLogout()" />
+      <p-button label="Cancelar" ariaLabel="Cancelar cierre de sesión" severity="secondary" text (onClick)="cancelLogout()" />
+      <p-button label="Cerrar sesión" ariaLabel="Cerrar sesión" severity="danger" (onClick)="confirmLogout()" />
     </div>
   </div>
 </p-dialog>

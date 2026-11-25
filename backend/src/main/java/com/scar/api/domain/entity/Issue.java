@@ -66,11 +66,26 @@ public class Issue {
     @Column(name = "public_token")
     private UUID publicToken;
 
+    @Column(name = "helpdesk_request", nullable = false)
+    private boolean helpdeskRequest;
+
+    @Column(name = "public_tracking_enabled", nullable = false)
+    private boolean publicTrackingEnabled;
+
+    @Column(name = "submission_key")
+    private UUID submissionKey;
+
+    @Column(name = "first_public_reply_at")
+    private Instant firstPublicReplyAt;
+
     @Column(name = "start_date")
     private LocalDate startDate;
 
     @Column(name = "end_date")
     private LocalDate endDate;
+
+    @Column(name = "gantt_pinned", nullable = false)
+    private boolean ganttPinned;
 
     @Column(name = "assigned_at")
     private Instant assignedAt;
@@ -147,10 +162,19 @@ public class Issue {
     public void setReceptionChannel(String receptionChannel) { this.receptionChannel = receptionChannel; }
     public UUID getPublicToken() { return publicToken; }
     public void setPublicToken(UUID publicToken) { this.publicToken = publicToken; }
+    public boolean isHelpdeskRequest() { return helpdeskRequest; }
+    public void setHelpdeskRequest(boolean helpdeskRequest) { this.helpdeskRequest = helpdeskRequest; }
+    public boolean isPublicTrackingEnabled() { return publicTrackingEnabled; }
+    public void setPublicTrackingEnabled(boolean publicTrackingEnabled) { this.publicTrackingEnabled = publicTrackingEnabled; }
+    public void setSubmissionKey(UUID submissionKey) { this.submissionKey = submissionKey; }
+    public Instant getFirstPublicReplyAt() { return firstPublicReplyAt; }
+    public void setFirstPublicReplyAt(Instant firstPublicReplyAt) { this.firstPublicReplyAt = firstPublicReplyAt; }
     public LocalDate getStartDate() { return startDate; }
     public void setStartDate(LocalDate startDate) { this.startDate = startDate; }
     public LocalDate getEndDate() { return endDate; }
     public void setEndDate(LocalDate endDate) { this.endDate = endDate; }
+    public boolean isGanttPinned() { return ganttPinned; }
+    public void setGanttPinned(boolean ganttPinned) { this.ganttPinned = ganttPinned; }
     public Instant getAssignedAt() { return assignedAt; }
     public void setAssignedAt(Instant assignedAt) { this.assignedAt = assignedAt; }
     public Instant getCompletedAt() { return completedAt; }

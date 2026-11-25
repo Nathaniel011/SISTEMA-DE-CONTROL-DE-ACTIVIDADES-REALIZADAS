@@ -1,113 +1,79 @@
-<div class="yt-content yt-content-standalone">
-  <div class="yt-content-header flex-col sm:flex-row gap-3">
-    <div>
-      <h1 class="yt-content-title m-0">Tableros</h1>
-      <p class="text-surface-500 m-0 mt-1">Gestiona tableros, miembros e incidencias de tu equipo.</p>
-    </div>
-    <div class="flex gap-2">
-      <p-button label="Buscar tableros" icon="pi pi-search" severity="secondary" (onClick)="openSwitcher()" />
-      @if (permissions.canCreateBoard()) {
-        <p-button
-          label="Nuevo tablero"
-          icon="pi pi-plus"
-          severity="primary"
-          (onClick)="openCreate()"
-        />
-      }
-    </div>
-  </div>
+<main class="yt-content yt-content-standalone flex flex-col gap-5" aria-labelledby="work-projects-title">
+  <app-work-page-header headingId="work-projects-title" title="Proyectos" icon="pi pi-folder"
+    description="Gestiona los equipos y los espacios donde se registran las incidencias.">
+    @if (permissions.canCreateBoard()) {
+      <p-button label="Nuevo proyecto" ariaLabel="Nuevo proyecto" icon="pi pi-plus" (onClick)="openCreate()" />
+    }
+  </app-work-page-header>
 
-  <p-iconfield class="w-full max-w-xl mt-4">
-    <p-inputicon class="pi pi-search" />
-    <input
-      pInputText
-      class="w-full"
-      placeholder="Buscar tableros"
-      [ngModel]="search()"
-      (ngModelChange)="search.set($event)"
-    />
-  </p-iconfield>
+  @if (workService.isLoading()) {
+    <p class="m-0 text-surface-600" role="status">Cargando proyectos…</p>
+  } @else if (workService.bootstrapError()) {
+    <p class="m-0 text-red-700" role="alert">No se pudieron cargar los proyectos.</p>
+    <p-button label="Reintentar" ariaLabel="Reintentar" icon="pi pi-refresh" [outlined]="true" (onClick)="retry()" />
+  } @else {
+    <p-iconfield class="w-full sm:max-w-sm">
+      <p-inputicon class="pi pi-search" />
+      <input pInputText type="search" class="w-full" placeholder="Buscar proyectos…" aria-label="Buscar proyectos"
+        [ngModel]="search()" (ngModelChange)="search.set($event)" />
+    </p-iconfield>
 
-  <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mt-6">
-    @for (board of rootBoards(); track board.id) {
-      @let stats = workService.getBoardStats(board.id);
-      @let members = getBoardMembers(board.id);
-      <button
-        type="button"
-        class="work-board-tile text-left cursor-pointer"
-        [class.work-board-tile-general]="board.type === 'general'"
-        (click)="openBoard(board)"
-      >
-        @if (board.type === 'general') {
-          <div class="work-board-tile-accent work-board-tile-accent-general"></div>
-        } @else {
-          <div class="work-board-tile-accent" [class]="board.accent"></div>
-        }
-        <div class="work-board-tile-body">
+    <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      @for (project of projects(); track project.id) {
+        @let members = getBoardMembers(project.id);
+        <article class="flex min-w-0 flex-col gap-3 rounded-xl border border-surface-200 bg-surface-0 p-4">
           <div class="flex items-start justify-between gap-2">
-            <div class="flex-1 min-w-0">
-              <h3 class="text-lg font-semibold m-0">{{ boardDisplayName(board) }}</h3>
-              @if (board.type !== 'general' && board.description) {
-                <p class="text-sm text-surface-500 m-0 mt-1">{{ board.description }}</p>
-              }
+            <div class="min-w-0">
+              <span class="rounded-md bg-primary-50 px-2 py-1 text-xs font-semibold text-primary-800">{{ project.key }}</span>
+              <h2 class="mb-0 mt-2 break-words text-base font-semibold">
+                <a [routerLink]="['/work/projects', project.id]" class="text-primary-900 hover:underline">{{ boardDisplayName(project) }}</a>
+              </h2>
             </div>
-            <div class="flex items-center gap-1">
-              <p-button
-                icon="pi pi-users"
-                size="small"
-                text
-                rounded
-                (onClick)="openMembersDialog(board.id, $event)"
-                [disabled]="!workService.canManageBoardMembers()"
-              />
-              @if (permissions.canDeleteBoard() && board.type !== 'general') {
-                <p-button
-                  icon="pi pi-trash"
-                  size="small"
-                  text
-                  rounded
-                  severity="danger"
-                  (onClick)="openDeleteBoardDialog(board, $event)"
-                />
+            <div class="flex shrink-0 gap-1">
+              @if (workService.canManageBoardMembers()) {
+                <p-button icon="pi pi-users" size="small" [text]="true" severity="secondary"
+                  [ariaLabel]="'Gestionar equipo de ' + boardDisplayName(project)" (onClick)="openMembersDialog(project.id)" />
+              }
+              @if (permissions.canDeleteBoard() && project.type !== 'general') {
+                <p-button icon="pi pi-trash" size="small" [text]="true" severity="secondary"
+                  [ariaLabel]="'Eliminar ' + project.name" (onClick)="openDeleteBoardDialog(project)" />
               }
             </div>
           </div>
-          <p class="text-sm text-surface-600 mt-3 m-0">{{ stats.total }} incidencias · {{ stats.inProgress }} en curso</p>
-          <div class="mt-2 flex flex-wrap gap-1">
-            @for (member of members; track member.id) {
-              <p-tag [value]="member.initials" [title]="member.name" severity="secondary" />
+          @if (project.description) {
+            <p class="m-0 break-words text-sm text-surface-600">{{ project.description }}</p>
+          }
+          <p class="m-0 text-sm text-surface-600">{{ members.length }} {{ members.length === 1 ? 'miembro' : 'miembros' }}</p>
+          <div class="mt-auto flex flex-wrap gap-x-4 gap-y-2 border-t border-surface-200 pt-3">
+            <a routerLink="/work/issues" [queryParams]="{board: project.id}" class="text-sm font-semibold text-primary-800 hover:underline">
+              Ver incidencias
+            </a>
+            @if (project.type === 'general') {
+              <a routerLink="/work/inbox" class="text-sm font-semibold text-primary-800 hover:underline">Ir a Recepción</a>
+            } @else {
+              <a [routerLink]="['/work/agile', project.id]" class="text-sm font-semibold text-primary-800 hover:underline">Abrir tablero</a>
             }
           </div>
-          @if (childBoardsFor(board.id).length) {
-            <div class="mt-4 flex flex-col gap-1">
-              @for (child of childBoardsFor(board.id); track child.id) {
-                <span
-                  class="text-sm text-primary-700 hover:underline"
-                  (click)="openBoard(child); $event.stopPropagation()"
-                >
-                  • {{ child.name }}
-                </span>
-              }
-            </div>
-          }
-        </div>
-      </button>
-    } @empty {
-      <p class="text-surface-500 col-span-full m-0">No hay tableros que coincidan con la búsqueda.</p>
-    }
-  </div>
-</div>
+        </article>
+      } @empty {
+        <p class="m-0 text-surface-600">{{ search().trim() ? 'No hay proyectos que coincidan.' : 'No tienes proyectos disponibles.' }}</p>
+      }
+    </div>
+  }
+</main>
 
-<app-work-board-switcher />
-
-<p-dialog header="Nuevo tablero" [modal]="true" [style]="{ width: '28rem' }" [visible]="createDialogOpen()" (visibleChange)="createDialogOpen.set($event)">
+<p-dialog header="Nuevo proyecto" [modal]="true" [style]="{ width: 'min(94vw, 28rem)' }" [visible]="createDialogOpen()"
+  [closable]="!creatingBoard()" [closeOnEscape]="!creatingBoard()" (visibleChange)="createDialogOpen.set($event)">
   <div class="flex flex-col gap-4 pt-2">
-    <input pInputText placeholder="Nombre" class="w-full" [ngModel]="boardName()" (ngModelChange)="boardName.set($event)" />
-    <textarea pTextarea rows="3" placeholder="Descripción" class="w-full" [ngModel]="boardDescription()" (ngModelChange)="boardDescription.set($event)"></textarea>
+    <input pInputText placeholder="Nombre" aria-label="Nombre del proyecto" class="w-full" maxlength="120"
+      [disabled]="creatingBoard()" [ngModel]="boardName()" (ngModelChange)="boardName.set($event)" />
+    <textarea pTextarea rows="3" placeholder="Descripción" aria-label="Descripción del proyecto" class="w-full"
+      [disabled]="creatingBoard()" [ngModel]="boardDescription()" (ngModelChange)="boardDescription.set($event)"></textarea>
+    @if (createBoardError()) { <p class="m-0 text-sm text-red-700" role="alert">{{ createBoardError() }}</p> }
   </div>
   <ng-template #footer>
-    <p-button label="Cancelar" severity="secondary" text (onClick)="createDialogOpen.set(false)" />
-    <p-button label="Crear" icon="pi pi-check" (onClick)="saveBoard()" />
+    <p-button label="Cancelar" severity="secondary" text [disabled]="creatingBoard()" (onClick)="createDialogOpen.set(false)" />
+    <p-button label="Crear" icon="pi pi-check" [loading]="creatingBoard()" [disabled]="!boardName().trim()" (onClick)="saveBoard()" />
   </ng-template>
 </p-dialog>
 
@@ -115,31 +81,42 @@
   header="Confirmar eliminación"
   [modal]="true"
   [closable]="false"
+  [closeOnEscape]="!deletingBoard()"
   [draggable]="false"
   [resizable]="false"
-  [style]="{ width: '28rem' }"
+  [style]="{ width: 'min(94vw, 28rem)' }"
   [visible]="deleteDialogOpen()"
   (visibleChange)="deleteDialogOpen.set($event)"
 >
   @if (boardToDelete(); as board) {
     <p class="m-0 text-surface-600">
-      ¿Eliminar el tablero <strong>{{ board.name }}</strong>? Se borrarán todas sus tarjetas y subtableros. Esta acción no se puede deshacer.
+      ¿Eliminar el proyecto <strong>{{ board.name }}</strong>? Se borrarán todas sus incidencias y subproyectos. Esta acción no se puede deshacer.
     </p>
   }
+  @if (actionError()) { <p class="text-sm text-red-700" role="alert">{{ actionError() }}</p> }
   <ng-template #footer>
     <p-button label="Cancelar" severity="secondary" text (onClick)="cancelDeleteBoard()" [disabled]="deletingBoard()" />
-    <p-button label="Eliminar tablero" icon="pi pi-trash" severity="danger" (onClick)="executeDeleteBoard()" [loading]="deletingBoard()" />
+    <p-button label="Eliminar proyecto" icon="pi pi-trash" severity="danger" (onClick)="executeDeleteBoard()" [loading]="deletingBoard()" />
   </ng-template>
 </p-dialog>
 
-<p-dialog header="Gestionar miembros" [modal]="true" [style]="{ width: '32rem' }" [visible]="membersDialogOpen()" (visibleChange)="membersDialogOpen.set($event)">
+<p-dialog header="Gestionar miembros" [modal]="true" [style]="{ width: 'min(94vw, 32rem)' }"
+  [closable]="!savingMembers()" [closeOnEscape]="!savingMembers()"
+  [visible]="membersDialogOpen()" (visibleChange)="membersDialogOpen.set($event)">
   <div class="flex flex-col gap-4 pt-2">
+    @if (usersService.loading()) {
+      <p class="m-0 text-surface-600" role="status">Cargando usuarios…</p>
+    } @else if (memberLoadError()) {
+      <p class="m-0 text-red-700" role="alert">No se pudo cargar la lista de usuarios.</p>
+      <p-button label="Reintentar" ariaLabel="Reintentar carga de usuarios" [outlined]="true" (onClick)="loadMembers()" />
+    } @else {
     <p-iconfield class="w-full">
       <p-inputicon class="pi pi-search" />
       <input
         pInputText
         class="w-full"
         placeholder="Buscar por nombre o usuario"
+        aria-label="Buscar miembros"
         [ngModel]="memberSearch()"
         (ngModelChange)="memberSearch.set($event)"
       />
@@ -153,6 +130,7 @@
           <p-checkbox
             [inputId]="'board-member-' + user.id"
             [binary]="true"
+            [disabled]="savingMembers()"
             [ngModel]="isMemberSelected(user.id)"
             (ngModelChange)="toggleMember(user.id, $event)"
           />
@@ -165,9 +143,12 @@
         <p class="text-sm text-surface-500 m-2">No hay usuarios activos que coincidan.</p>
       }
     </div>
+    }
+    @if (actionError()) { <p class="m-0 text-sm text-red-700" role="alert">{{ actionError() }}</p> }
   </div>
   <ng-template #footer>
     <p-button label="Cancelar" severity="secondary" text (onClick)="membersDialogOpen.set(false)" [disabled]="savingMembers()" />
-    <p-button label="Guardar" icon="pi pi-check" (onClick)="saveMembers()" [loading]="savingMembers()" />
+    <p-button label="Guardar" ariaLabel="Guardar miembros" icon="pi pi-check" (onClick)="saveMembers()"
+      [disabled]="usersService.loading() || memberLoadError()" [loading]="savingMembers()" />
   </ng-template>
 </p-dialog>

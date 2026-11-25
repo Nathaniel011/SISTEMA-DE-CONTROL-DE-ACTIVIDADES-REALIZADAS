@@ -3,6 +3,7 @@ import {Button} from 'primeng/button';
 import {Dialog} from 'primeng/dialog';
 import {Select} from 'primeng/select';
 import {FormsModule} from '@angular/forms';
+import {RouterLink} from '@angular/router';
 import {firstValueFrom} from 'rxjs';
 import {WorkService} from '../../../core/services/work.service';
 import {TimeEntryWithIssue, WorkApiService} from '../../../core/services/work-api.service';
@@ -59,7 +60,7 @@ interface TimeDateRow {
 @Component({
   selector: 'app-work-timesheets',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Button, Dialog, Select, FormsModule],
+  imports: [Button, Dialog, Select, FormsModule, RouterLink],
   templateUrl: './work-timesheets.html',
 })
 export class WorkTimesheets implements OnInit {

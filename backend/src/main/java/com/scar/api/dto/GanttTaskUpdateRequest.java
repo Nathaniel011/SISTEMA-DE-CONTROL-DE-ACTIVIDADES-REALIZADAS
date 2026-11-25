@@ -1,8 +1,12 @@
 package com.scar.api.dto;
 
-import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 
 public record GanttTaskUpdateRequest(
-    @NotBlank String start,
-    @NotBlank String end
+    String start,
+    String end,
+    @Min(0) @Max(1_752_000) Integer estimateMinutes,
+    boolean updateEstimate,
+    Boolean pinned
 ) {}

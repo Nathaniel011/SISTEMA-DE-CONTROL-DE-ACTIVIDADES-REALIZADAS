@@ -24,7 +24,9 @@ public class JwtService {
 
     public JwtService(JwtProperties properties) {
         this.properties = properties;
-        this.key = Keys.hmacShaKeyFor(properties.secret().getBytes(StandardCharsets.UTF_8));
+        this.key = properties.secret() == null || properties.secret().isBlank()
+            ? Jwts.SIG.HS256.key().build()
+            : Keys.hmacShaKeyFor(properties.secret().getBytes(StandardCharsets.UTF_8));
     }
 
     public String generateToken(User user) {

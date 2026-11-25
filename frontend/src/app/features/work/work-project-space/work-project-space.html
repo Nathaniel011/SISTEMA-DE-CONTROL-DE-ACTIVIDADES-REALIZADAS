@@ -1,0 +1,162 @@
+<main class="yt-content yt-content-standalone grid gap-4" aria-labelledby="project-space-title">
+  <a routerLink="/work/projects" class="justify-self-start text-sm font-semibold text-primary-800 hover:underline">
+    <i class="pi pi-arrow-left" aria-hidden="true"></i> Proyectos
+  </a>
+  <app-work-page-header headingId="project-space-title" [title]="project() ? displayName(project()!) : 'Proyecto'"
+    icon="pi pi-folder" [description]="project()?.description || ''">
+    @if (project(); as project) {
+      <a routerLink="/work/issues" [queryParams]="{board: project.id}"
+        class="rounded-lg bg-primary-50 px-3 py-2 text-sm font-semibold text-primary-800 hover:bg-primary-100">
+        <i class="pi pi-list mr-1" aria-hidden="true"></i> Incidencias del proyecto
+      </a>
+      @if (project.type === 'general') {
+        <a routerLink="/work/inbox" class="rounded-lg px-3 py-2 text-sm font-semibold text-primary-800 hover:bg-primary-50">Recepción</a>
+      } @else {
+        <a routerLink="/work/agile/vista" [queryParams]="{board: project.id}"
+          class="rounded-lg px-3 py-2 text-sm font-semibold text-primary-800 hover:bg-primary-50">
+          <i class="pi pi-objects-column mr-1" aria-hidden="true"></i> Tablero
+        </a>
+        <a routerLink="/work/gantt" [queryParams]="{board: project.id}"
+          class="rounded-lg px-3 py-2 text-sm font-semibold text-primary-800 hover:bg-primary-50">
+          <i class="pi pi-chart-bar mr-1" aria-hidden="true"></i> Gantt
+        </a>
+      }
+    }
+  </app-work-page-header>
+
+  @if (loading()) {
+    <p role="status" class="m-0 text-surface-600">Cargando proyecto…</p>
+  } @else if (loadError()) {
+    <section class="rounded-xl border border-surface-200 bg-surface-0 p-4">
+      <p role="alert" class="mt-0 text-surface-700">No se pudo abrir el proyecto. Comprueba el enlace y tu acceso.</p>
+      <p-button label="Reintentar" ariaLabel="Reintentar" [outlined]="true" (onClick)="load(projectId())" />
+    </section>
+  } @else if (project(); as project) {
+    <nav aria-label="Navegación del proyecto" class="flex flex-wrap gap-2 rounded-xl border border-surface-200 bg-surface-0 p-2">
+      @for (item of panes(); track item.id) {
+        <a [routerLink]="[]" [queryParams]="{section: item.id === 'overview' ? null : item.id}"
+          class="rounded-lg px-3 py-2 text-sm font-semibold text-primary-800 hover:bg-primary-50"
+          [class.bg-primary-100]="pane() === item.id"
+          [attr.aria-current]="pane() === item.id ? 'page' : null">{{ item.label }}</a>
+      }
+    </nav>
+
+    @if (actionError()) { <p role="alert" class="m-0 rounded-lg bg-red-50 p-3 text-sm text-red-800">{{ actionError() }}</p> }
+    @if (message()) { <p role="status" class="m-0 rounded-lg bg-primary-50 p-3 text-sm text-primary-900">{{ message() }}</p> }
+
+    @switch (pane()) {
+      @case ('overview') {
+        <dl class="m-0 grid grid-cols-3 gap-2 sm:gap-4">
+          <div class="rounded-xl border border-surface-200 bg-surface-0 p-3 sm:p-4"><dt class="text-sm text-surface-600">Incidencias</dt><dd class="m-0 text-xl font-semibold">{{ stats().total }}</dd></div>
+          <div class="rounded-xl border border-surface-200 bg-surface-0 p-3 sm:p-4"><dt class="text-sm text-surface-600">Abiertas</dt><dd class="m-0 text-xl font-semibold text-primary-800">{{ stats().open }}</dd></div>
+          <div class="rounded-xl border border-surface-200 bg-surface-0 p-3 sm:p-4"><dt class="text-sm text-surface-600">Resueltas</dt><dd class="m-0 text-xl font-semibold text-primary-800">{{ stats().closed }}</dd></div>
+        </dl>
+        <section class="grid gap-3 rounded-xl border border-surface-200 bg-surface-0 p-4" aria-labelledby="project-recent-title">
+          <h2 id="project-recent-title" class="m-0 text-lg font-semibold">Incidencias actualizadas</h2>
+          <ul class="m-0 grid list-none divide-y divide-surface-200 p-0">
+            @for (card of recent(); track card.id) {
+              <li class="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-3">
+                <a [routerLink]="['/work/issues', card.id]" [queryParams]="{returnTo: '/work/projects/' + project.id}"
+                  class="min-w-0 break-words text-sm font-semibold text-primary-800 hover:underline">
+                  <span class="mr-2 font-mono text-xs">{{ work.getIssueKey(card) }}</span>{{ card.title }}
+                </a>
+                <span class="text-xs text-surface-600">{{ status[card.columnId] }}</span>
+              </li>
+            } @empty { <li class="text-sm text-surface-600">Todavía no hay incidencias visibles.</li> }
+          </ul>
+        </section>
+      }
+      @case ('team') {
+        <section class="grid gap-3 rounded-xl border border-surface-200 bg-surface-0 p-4" aria-labelledby="project-team-title">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h2 id="project-team-title" class="m-0 text-lg font-semibold">Equipo del proyecto</h2>
+            @if (work.canManageBoardMembers()) {
+              <a routerLink="/work/projects" [queryParams]="{equipo: project.id}" class="text-sm font-semibold text-primary-800 hover:underline">Gestionar miembros</a>
+            }
+          </div>
+          <ul class="m-0 grid list-none divide-y divide-surface-200 p-0">
+            @for (member of members(); track member.id) {
+              <li class="flex items-center gap-3 py-3">
+                <span class="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-primary-100 text-xs font-semibold text-primary-900" aria-hidden="true">{{ member.initials }}</span>
+                <span class="min-w-0 break-words font-medium">{{ member.name }}</span>
+              </li>
+            } @empty { <li class="text-sm text-surface-600">El proyecto aún no tiene miembros.</li> }
+          </ul>
+        </section>
+      }
+      @case ('fields') {
+        <div class="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(17rem,.65fr)]">
+          <section class="grid gap-3 rounded-xl border border-surface-200 bg-surface-0 p-4" aria-labelledby="project-fields-title">
+            <h2 id="project-fields-title" class="m-0 text-lg font-semibold">Campos del proyecto</h2>
+            <ul class="m-0 grid list-none divide-y divide-surface-200 p-0">
+              @for (field of configuration()?.fields ?? []; track field.id) {
+                <li class="flex flex-wrap items-start justify-between gap-2 py-3">
+                  <div class="min-w-0">
+                    <p class="m-0 break-words font-semibold">{{ field.name }} @if (field.archived) { <span class="text-xs text-surface-600">· Archivado</span> }</p>
+                    <p class="mb-0 mt-1 break-words text-sm text-surface-600">
+                      @for (choice of kinds; track choice[0]) { @if (choice[0] === field.kind) { {{ choice[1] }} } }
+                      @if (field.options.length) { · {{ field.options.join(', ') }} }
+                    </p>
+                  </div>
+                  <p-button [label]="field.archived ? 'Restaurar' : 'Archivar'" [ariaLabel]="(field.archived ? 'Restaurar ' : 'Archivar ') + field.name"
+                    size="small" [text]="true" severity="secondary" [disabled]="saving()" (onClick)="archiveField(field)" />
+                </li>
+              } @empty { <li class="text-sm text-surface-600">Todavía no hay campos personalizados.</li> }
+            </ul>
+          </section>
+          <form class="grid gap-3 rounded-xl border border-surface-200 bg-surface-0 p-4" (ngSubmit)="createField()">
+            <h2 class="m-0 text-lg font-semibold">Nuevo campo</h2>
+            <label for="project-field-name" class="text-sm font-medium">Nombre</label>
+            <input id="project-field-name" pInputText name="fieldName" [ngModel]="fieldName()" (ngModelChange)="fieldName.set($event)"
+              [disabled]="saving()" maxlength="80" required />
+            <label for="project-field-kind" class="text-sm font-medium">Tipo de campo</label>
+            <select id="project-field-kind" class="p-inputtext w-full" name="fieldKind" [ngModel]="fieldKind()"
+              (ngModelChange)="fieldKind.set($event)" [disabled]="saving()">
+              @for (choice of kinds; track choice[0]) { <option [value]="choice[0]">{{ choice[1] }}</option> }
+            </select>
+            @if (fieldKind() === 'enumeration') {
+              <label for="project-field-options" class="text-sm font-medium">Opciones, una por línea</label>
+              <textarea id="project-field-options" pTextarea name="options" rows="4" maxlength="2500" [ngModel]="optionsText()"
+                (ngModelChange)="optionsText.set($event)" [disabled]="saving()" required></textarea>
+            }
+            <p-button class="justify-self-end" type="submit" label="Crear campo" ariaLabel="Crear campo" icon="pi pi-plus"
+              [loading]="saving()" [disabled]="!fieldName().trim() || (fieldKind() === 'enumeration' && !optionsText().trim())" />
+          </form>
+        </div>
+      }
+      @case ('workflow') {
+        <section class="grid gap-4 rounded-xl border border-surface-200 bg-surface-0 p-4" aria-labelledby="project-workflow-title">
+          <h2 id="project-workflow-title" class="m-0 text-lg font-semibold">Transiciones de estado</h2>
+          <label class="flex items-start gap-2 text-sm font-semibold">
+            <input type="checkbox" class="mt-0.5 accent-primary-700" [checked]="restricted()" [disabled]="saving()"
+              (change)="restricted.set($any($event.target).checked)" />
+            Limitar los cambios a las transiciones configuradas
+          </label>
+          @if (restricted()) {
+            <label for="project-state-source" class="text-sm font-medium">Estado de origen</label>
+            <select id="project-state-source" class="p-inputtext sm:max-w-xs" [value]="source()" [disabled]="saving()"
+              (change)="source.set($any($event.target).value)">
+              @for (state of states; track state) { <option [value]="state" [selected]="source() === state">{{ status[state] }}</option> }
+            </select>
+            <fieldset class="m-0 grid gap-2 rounded-lg border border-surface-200 p-3 sm:grid-cols-2">
+              <legend class="px-1 text-sm font-medium">Destinos desde {{ status[source()] }}</legend>
+              @for (state of states; track state) {
+                @if (state !== source()) {
+                  <label class="flex items-center gap-2 p-1 text-sm">
+                    <input type="checkbox" class="accent-primary-700" [checked]="permitted(state)" [disabled]="saving()"
+                      (change)="toggleRule(state, $any($event.target).checked)" />
+                    {{ status[state] }}
+                  </label>
+                }
+              }
+            </fieldset>
+          } @else {
+            <p class="m-0 text-sm text-surface-600">El proyecto permite los cambios de estado que autoricen los permisos de cada incidencia.</p>
+          }
+          <p-button class="justify-self-end" label="Publicar flujo" ariaLabel="Publicar flujo" icon="pi pi-check"
+            [loading]="saving()" [disabled]="!workflowDirty()" (onClick)="publishWorkflow()" />
+        </section>
+      }
+    }
+  }
+</main>

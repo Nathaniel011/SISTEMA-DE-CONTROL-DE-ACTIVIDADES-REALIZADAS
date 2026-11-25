@@ -54,6 +54,7 @@ export interface WorkComment {
   authorId: string;
   text: string;
   createdAt: string;
+  publicReply?: boolean;
 }
 
 export interface WorkTimeEntry {
@@ -108,6 +109,14 @@ export interface WorkCard {
   requesterEmail?: string;
   receptionChannel?: string;
   publicToken?: string;
+  helpdeskRequest?: boolean;
+  publicTrackingEnabled?: boolean;
+  sla?: {
+    firstReplyDueAt: string;
+    firstReplyAt: string | null;
+    resolutionDueAt: string;
+    resolvedAt: string | null;
+  } | null;
   startDate?: string;
   endDate?: string;
   issueType?: string | null;
@@ -134,6 +143,7 @@ export interface WorkBoardList {
   archived: boolean;
   createdAt: string;
   updatedAt: string;
+  columnId?: WorkColumnId;
 }
 
 export interface WorkState {

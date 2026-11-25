@@ -16,6 +16,9 @@ public class Whiteboard {
     @JoinColumn(name = "project_id")
     private Project project;
 
+    @Column(name = "project_removed", nullable = false)
+    private boolean projectRemoved;
+
     @Column(nullable = false, length = 255)
     private String name;
 
@@ -43,6 +46,8 @@ public class Whiteboard {
     public UUID getId() { return id; }
     public Project getProject() { return project; }
     public void setProject(Project project) { this.project = project; }
+    public boolean isProjectRemoved() { return projectRemoved; }
+    public void setProjectRemoved(boolean projectRemoved) { this.projectRemoved = projectRemoved; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
     public String getDescription() { return description; }

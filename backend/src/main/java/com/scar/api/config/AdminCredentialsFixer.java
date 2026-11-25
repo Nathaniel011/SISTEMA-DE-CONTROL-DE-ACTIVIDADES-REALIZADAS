@@ -3,6 +3,7 @@ package com.scar.api.config;
 import com.scar.api.domain.entity.User;
 import com.scar.api.domain.enums.UserRole;
 import com.scar.api.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -13,24 +14,27 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Optional;
 
 @Component
-@ConditionalOnProperty(name = "scar.dev.auto-fix-admin", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(name = "scar.dev.auto-fix-admin", havingValue = "true", matchIfMissing = false)
 public class AdminCredentialsFixer implements ApplicationRunner {
 
     private static final String ADMIN_USERNAME = "administrador";
     private static final String ADMIN_EMAIL = "admin@gmail.com";
-    private static final String ADMIN_PASSWORD = "password";
+    private final String recoveryPassword;
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
 
-    public AdminCredentialsFixer(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+    public AdminCredentialsFixer(UserRepository userRepository, PasswordEncoder passwordEncoder,
+                                @Value("${scar.bootstrap.admin-password:}") String recoveryPassword) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.recoveryPassword = recoveryPassword;
     }
 
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
+        if (recoveryPassword.isBlank()) return;
         findAdminUser().ifPresent(this::normalizeAdminAccount);
     }
 
@@ -66,8 +70,9 @@ public class AdminCredentialsFixer implements ApplicationRunner {
         }
 
         String hash = admin.getPasswordHash();
-        if (!isValidPassword(hash)) {
-            admin.setPasswordHash(passwordEncoder.encode(ADMIN_PASSWORD));
+        // Solo repara hashes rotos/ausentes. No fuerza la contraseña a "password" si ya es un bcrypt válido.
+        if (!isValidBcryptHash(hash)) {
+            admin.setPasswordHash(passwordEncoder.encode(recoveryPassword));
             changed = true;
         }
 
@@ -76,10 +81,8 @@ public class AdminCredentialsFixer implements ApplicationRunner {
         }
     }
 
-    private boolean isValidPassword(String hash) {
-        if (hash == null || (!hash.startsWith("$2a$") && !hash.startsWith("$2b$") && !hash.startsWith("$2y$"))) {
-            return false;
-        }
-        return passwordEncoder.matches(ADMIN_PASSWORD, hash);
+    private boolean isValidBcryptHash(String hash) {
+        return hash != null
+            && (hash.startsWith("$2a$") || hash.startsWith("$2b$") || hash.startsWith("$2y$"));
     }
 }
